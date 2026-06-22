@@ -21,6 +21,26 @@ from winthorpe import config
 logger = logging.getLogger(__name__)
 
 
+def read_journal(session_date: Optional[str] = None,
+                 journal_dir: Optional[Path] = None) -> list[dict]:
+    """Read a session's journal rows (thesis → plan → events → outcome). Empty
+    list if the file doesn't exist. Default date = today (UTC)."""
+    d = Path(journal_dir if journal_dir is not None else config.JOURNAL_DIR)
+    sd = session_date or datetime.now(UTC).date().isoformat()
+    path = d / f"plays-{sd}.jsonl"
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line:
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows
+
+
 class Journal:
     def __init__(self, session_date: Optional[str] = None, journal_dir: Optional[Path] = None):
         # JOURNAL_DIR read dynamically (None) so tests can redirect it.

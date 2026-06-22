@@ -83,10 +83,90 @@ def get_position_state() -> dict | None:
 @mcp.tool
 def get_structural_levels() -> dict:
     """Prior-day/overnight price structure: PDH/PDL/PDC, ONH/ONL (ES basis-adj),
-    opening range, today's RTH extremes. The anchors to check a thesis level
-    against for confluence."""
+    opening range, session/weekly VWAP, today's RTH extremes. The anchors to
+    check a thesis level against for confluence."""
     from winthorpe.levels.structural import fetch_structural_levels
     return fetch_structural_levels().to_dict()
+
+
+# --- read / inspect kit (raw data for bespoke agent reasoning) --------------
+@mcp.tool
+def get_journal(session_date: str = "") -> list[dict]:
+    """Past plays for a session (thesis → plan → events → outcome) as journal
+    rows. Default: today. The record an agent reads to learn from prior trades."""
+    from winthorpe.journal.journal import read_journal
+    return read_journal(session_date or None)
+
+
+@mcp.tool
+def get_bars(symbol: str, interval: str = "1m", lookback_minutes: int = 120) -> list[dict]:
+    """Raw OHLCV candles for SPX/SPY/ES/NQ (closed bars). For an agent that wants
+    to do its own analysis rather than consume pre-digested levels. lookback
+    clamped to 1 day."""
+    import asyncio
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from winthorpe.data.bars import SYMBOL_MAP, TastytradeBarSource
+
+    sym = symbol.upper()
+    if sym not in SYMBOL_MAP:
+        return [{"error": f"unsupported symbol {symbol!r}; use {sorted(SYMBOL_MAP)}"}]
+    et = ZoneInfo("America/New_York")
+    start = datetime.now(et) - timedelta(minutes=max(1, min(lookback_minutes, 1440)))
+    bars = asyncio.run(TastytradeBarSource((sym,)).backfill(
+        interval=interval, start_time=start, extended_trading_hours=True))
+    return [{"ts": c.ts.isoformat(), "o": c.open, "h": c.high, "l": c.low,
+             "c": c.close, "v": c.volume} for c in bars]
+
+
+@mcp.tool
+def get_option_quote(right: str, strike: float, expiry: str) -> dict:
+    """Resolve any SPXW option (right C/P, strike, expiry YYYY-MM-DD) to its OCC
+    + streamer symbol and current mark. For pricing a strike before authoring a
+    plan."""
+    from winthorpe.broker.options import resolve_spxw_option
+    r = resolve_spxw_option(right, strike, expiry)
+    r["mark"] = service().market.option_mark(r["streamer_symbol"])
+    return r
+
+
+@mcp.tool
+def validate_plan(plan: dict) -> dict:
+    """Dry-check a hand-authored plan WITHOUT arming it: validation errors plus a
+    sizing preview (entry mark, derived contracts, worst-case loss, or why it's
+    infeasible) against the current budget. Lets an agent iterate on a plan it
+    built itself before committing via sign_and_arm_plan."""
+    from winthorpe.broker.options import resolve_spxw_option
+    from winthorpe.risk.sizing import derive_contracts, stop_premium_from_sl_pct
+
+    try:
+        tp = TradePlan(**plan)
+    except Exception as exc:
+        return {"valid": False, "errors": [f"could not build plan: {exc}"],
+                "sizing_preview": None}
+    errs = tp.validate()
+    preview = None
+    if not errs:
+        try:
+            r = resolve_spxw_option(tp.side.occ_right, tp.strike, tp.expiry)
+            mark = service().market.option_mark(r["streamer_symbol"])
+            if mark and mark > 0:
+                budget = service().risk.remaining_budget()
+                if tp.max_play_loss is not None:
+                    budget = min(budget, tp.max_play_loss)
+                stop_prem = stop_premium_from_sl_pct(mark, tp.sl_pct)
+                s = derive_contracts(mark, stop_prem, budget,
+                                     tp.min_contracts, tp.max_contracts)
+                preview = {"entry_mark": mark, "stop_premium": stop_prem,
+                           "budget": budget, "feasible": s.feasible,
+                           "contracts": s.contracts,
+                           "worst_case_loss": s.worst_case_loss, "note": s.reason}
+            else:
+                preview = {"error": "no option mark available for sizing preview"}
+        except Exception as exc:
+            preview = {"error": str(exc)}
+    return {"valid": not errs, "errors": errs, "sizing_preview": preview}
 
 
 # --- deliberation: turn a thesis into a corrected draft ---------------------

@@ -57,7 +57,7 @@ def derive_contracts(
     if budget <= 0:
         return SizingResult(False, 0, 0.0, 0.0, "no budget remaining")
 
-    per_contract_risk = (entry_premium - stop_premium) * OPTION_MULTIPLIER
+    per_contract_risk = round((entry_premium - stop_premium) * OPTION_MULTIPLIER, 2)
     max_affordable = math.floor(budget / per_contract_risk)
 
     if max_affordable < min_contracts:
@@ -69,7 +69,7 @@ def derive_contracts(
         )
 
     contracts = min(max_contracts, max_affordable)
-    worst = contracts * per_contract_risk
+    worst = round(contracts * per_contract_risk, 2)
     reason = ""
     if contracts < max_contracts:
         reason = (f"clamped to {contracts} (max {max_contracts} would risk "
