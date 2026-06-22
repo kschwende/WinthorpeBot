@@ -71,6 +71,7 @@ class Engine:
         self.broker = broker
         self.risk = risk
         self.journal = journal
+        self.open_state: Optional[OpenState] = None  # live position (None when flat)
 
     # -- live orchestration ------------------------------------------------
     def run_plan(self, plan: TradePlan, poll_interval: float = 1.0,
@@ -187,7 +188,8 @@ class Engine:
             logger.exception("OCO bracket placement failed for %s", plan.plan_id)
             self.journal.event(plan.plan_id, "oco_failed", tp=tp, sl=sl)
 
-        return OpenState(occ, streamer, sizing.contracts, fill, oco_id)
+        self.open_state = OpenState(occ, streamer, sizing.contracts, fill, oco_id)
+        return self.open_state
 
     # -- management --------------------------------------------------------
     def manage_step(self, plan: TradePlan, st: OpenState) -> Optional[str]:
@@ -243,4 +245,5 @@ class Engine:
                             session_realized=self.risk.realized_pnl,
                             remaining_budget=self.risk.remaining_budget())
         logger.info("closed %s reason=%s pnl=$%.0f", plan.plan_id, reason, pnl)
+        self.open_state = None
         return pnl
