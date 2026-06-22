@@ -3,7 +3,7 @@
 This is the agent's reasoning scaffold for the exact exchange from the original
 brief:
 
-  the user: "if SPX reaches the call wall at 7530, buy puts"
+  The user: "if SPX reaches the call wall at 7530, buy puts"
   Agent: corrects 7530 → the real call wall, proposes entry a few points below it
          with a stop above the wall, and a managed target.
 

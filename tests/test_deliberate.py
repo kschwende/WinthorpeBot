@@ -3,7 +3,7 @@
 from winthorpe.agent.deliberate import propose_plan
 from winthorpe.plan.schema import Comparator, Side
 
-# the user's example: he says 7530; live GEX says the call wall is 7500.
+# the user's example: they say 7530; live GEX says the call wall is 7500.
 GEX = {
     "spot": 7487.0,
     "call_wall": {"strike": 7500.0, "oi": 4258},

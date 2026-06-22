@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""GEX Stream Service — persistent live 0DTE gamma for the /chart/ overlay.
+"""GEX Stream Service — persistent live 0DTE gamma for the chart overlay.
 
-The 15-min cron (`agent/gex_engine.py`) cold-opens a DXLink connection,
-subscribes ~1,000 option symbols, collects once, and writes
-`agent/gex_levels.json`. That's the right cadence for the morning brief and
-session plan, but it leaves the chart's gamma overlay frozen for 15 minutes.
+The periodic cron (``winthorpe.data.gex_engine``) cold-opens a DXLink
+connection, subscribes ~1,000 option symbols, collects once, and writes
+``gex_levels.json`` (in ``STATE_DIR``). That's the right cadence for the morning
+brief and session plan, but it leaves the chart's gamma overlay frozen between
+runs.
 
 This daemon holds ONE DXLink connection open with a persistent Greeks + Summary
 subscription for today's 0DTE SPX strikes, keeps the latest event per symbol in
 memory, and recomputes the GEX frame every ~12s (the measured DXLink Greeks
 republish cadence is ~13s, so faster gains nothing). It writes a SEPARATE file,
-`agent/gex_levels_live.json`, so the multi-expiry `gex_levels.json` and every
-consumer that reads it are untouched. The chart-feed service prefers the live
-file when fresh and falls back to the 15-min file otherwise.
+``gex_levels_live.json``, so the multi-expiry ``gex_levels.json`` and every
+consumer that reads it are untouched. A chart feed prefers the live file when
+fresh and falls back to the periodic file otherwise.
 
 Scope: 0DTE only — that's what the chart overlay shows, and it keeps the held
 subscription light (~200 symbols vs ~1,400 multi-expiry). Open interest is
@@ -21,11 +22,11 @@ actually move intraday; the walls/OI ride along unchanged.
 
 Read-only market data: never places an order, never writes a producer store
 other than its own live snapshot. RTH-gated. Reuses ``build_gex_result`` from
-agent.gex_engine so the live frame is identical in shape to the cron's.
+``winthorpe.data.gex_engine`` so the live frame is identical in shape to the
+cron's.
 
-Run:
-    cd /home/user/upstream
-    PYTHONPATH=/home/user/upstream /usr/bin/python3 -u -m bot.gex_stream_service
+Run (from the repo root, with the project venv):
+    python -m winthorpe.data.gex_stream
 """
 
 from __future__ import annotations
