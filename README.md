@@ -67,7 +67,9 @@ Agent role is position-state-dependent by construction: while a plan runs there 
 and arms, but signing always passes validation + the risk gate it can't bypass.
 
 ### Known follow-ups before live
-- Port `_v41_wait_for_fill` for precise live fill-price (entry currently falls back
-  to the option mark when the broker response lacks `fill_price`).
-- Persist `SessionRisk` across process restarts (today it's in-memory per session).
 - A trading-hours shadow (DRY-RUN) session before the live lock comes off.
+- ES is not streamed (REST-fallback only); add a `/ES` front-month subscription if a
+  plan ever needs to trigger on ES.
+
+Done: live fill-price resolution (`wait_for_fill`), and `SessionRisk` + open-position
+persistence with broker-truth reconciliation on restart.
