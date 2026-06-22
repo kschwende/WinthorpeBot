@@ -80,6 +80,15 @@ def get_position_state() -> dict | None:
     return service().position_state()
 
 
+@mcp.tool
+def get_structural_levels() -> dict:
+    """Prior-day/overnight price structure: PDH/PDL/PDC, ONH/ONL (ES basis-adj),
+    opening range, today's RTH extremes. The anchors to check a thesis level
+    against for confluence."""
+    from winthorpe.levels.structural import fetch_structural_levels
+    return fetch_structural_levels().to_dict()
+
+
 # --- deliberation: turn a thesis into a corrected draft ---------------------
 @mcp.tool
 async def propose_plan(thesis: str, side: str, proposed_level: float,
@@ -89,13 +98,22 @@ async def propose_plan(thesis: str, side: str, proposed_level: float,
     corrections (e.g. 'you said 7530, the call wall is 7500'). Does NOT arm —
     review/edit the draft, then call sign_and_arm_plan."""
     gex = await compute_gex(product=product)
+    # Structural levels for confluence (best-effort — never block the proposal).
+    levels = None
+    try:
+        from winthorpe.levels.structural import fetch_structural_levels
+        levels = fetch_structural_levels()
+    except Exception:
+        logger.warning("structural levels unavailable for confluence", exc_info=True)
     proposal = _propose(
         thesis=thesis, side=Side(side.upper()), proposed_level=proposed_level,
-        gex=gex, expiry=expiry, tp_pct=tp_pct, sl_pct=sl_pct,
+        gex=gex, expiry=expiry, levels=levels, tp_pct=tp_pct, sl_pct=sl_pct,
         time_stop_et=time_stop_et,
     )
     return {"draft_plan": proposal.plan.to_dict(), "corrections": proposal.corrections,
-            "gex": {k: gex[k] for k in ("spot", "call_wall", "put_wall") if k in gex}}
+            "confluence": proposal.confluence,
+            "gex": {k: gex[k] for k in ("spot", "call_wall", "put_wall") if k in gex},
+            "structural_levels": levels.as_named() if levels else {}}
 
 
 # --- actions: arm / kill ----------------------------------------------------

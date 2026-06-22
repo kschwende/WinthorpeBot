@@ -16,7 +16,7 @@ authoritative-wall choice is explicit here: we trust the *live* GEX walls.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from winthorpe.plan.schema import Comparator, Condition, Side, TradePlan
 
@@ -33,6 +33,7 @@ def _round_to_grid(x: float, *, down: bool) -> float:
 class Proposal:
     plan: TradePlan
     corrections: list[str]
+    confluence: list[dict] = field(default_factory=list)
 
 
 def propose_plan(
@@ -42,6 +43,8 @@ def propose_plan(
     proposed_level: float,
     gex: dict,
     expiry: str,
+    levels=None,                  # StructuralLevels | None — for confluence notes
+    confluence_tol: float = 5.0,  # pts: structural level "near" the wall
     entry_offset: float = 5.0,    # enter this many pts inside the wall
     wall_buffer: float = 5.0,     # invalidation this many pts beyond the wall
     tp_pct: float = 0.30,
@@ -84,10 +87,26 @@ def propose_plan(
         f"{wall + wall_buffer if side is Side.PUT else wall - wall_buffer:g}."
     )
 
+    # Level confluence: does the wall line up with prior-day / overnight structure?
+    confluence: list[dict] = []
+    if levels is not None:
+        confluence = levels.confluence(wall, tolerance=confluence_tol)
+        if confluence:
+            tags = ", ".join(f"{h['name']} {h['price']:g}" for h in confluence)
+            corrections.append(
+                f"Confluence: the {wall_label} ({wall:g}) lines up with {tags} — "
+                f"a stronger level than gamma alone."
+            )
+        else:
+            corrections.append(
+                f"No structural confluence within {confluence_tol:g}pt of the "
+                f"{wall_label} — gamma level standing alone."
+            )
+
     plan = TradePlan(
         thesis=thesis, side=side, trigger=trigger, strike=strike, expiry=expiry,
         tp_pct=tp_pct, sl_pct=sl_pct, invalidation=invalidation,
         time_stop_et=time_stop_et, valid_until_et=valid_until_et,
         notes=" ".join(corrections),
     )
-    return Proposal(plan=plan, corrections=corrections)
+    return Proposal(plan=plan, corrections=corrections, confluence=confluence)

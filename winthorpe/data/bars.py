@@ -42,8 +42,11 @@ logger = logging.getLogger("tastytrade_bars")
 
 ET = ZoneInfo("America/New_York")
 
-# Parent root -> tastytrade continuous front-month streamer symbol.
-SYMBOL_MAP = {"ES": "/ES:XCME", "NQ": "/NQ:XCME"}
+# Parent root -> tastytrade DXLink streamer symbol. Futures use the continuous
+# front-month (/ES:XCME); the cash index (SPX) and equities (SPY) stream under
+# their bare symbol. SPX cash candles carry no volume (it's a calculated index)
+# — use them for price extremes only, not VWAP/Volume-Profile.
+SYMBOL_MAP = {"ES": "/ES:XCME", "NQ": "/NQ:XCME", "SPX": "SPX", "SPY": "SPY"}
 
 Candle = namedtuple("Candle", ["symbol", "ts", "open", "high", "low", "close", "volume"])
 

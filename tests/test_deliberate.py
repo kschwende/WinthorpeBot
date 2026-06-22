@@ -49,3 +49,27 @@ def test_no_correction_when_level_matches():
     )
     # No "you said X, GEX says Y" line when they agree.
     assert not any("Using" in c for c in p.corrections)
+
+
+def test_confluence_note_when_levels_align():
+    from winthorpe.levels.structural import StructuralLevels
+    # Call wall 7500 lines up with PDH 7503 and ONH 7498.
+    lv = StructuralLevels(pdh=7503.0, onh=7498.0, pdc=7475.0)
+    p = propose_plan(
+        thesis="fade", side=Side.PUT, proposed_level=7530.0, gex=GEX,
+        expiry="2026-06-22", levels=lv,
+    )
+    assert any("Confluence" in c for c in p.corrections)
+    names = {h["name"] for h in p.confluence}
+    assert {"PDH", "ONH"} <= names
+
+
+def test_confluence_absent_note_when_no_levels_near():
+    from winthorpe.levels.structural import StructuralLevels
+    lv = StructuralLevels(pdh=7400.0, onh=7390.0)   # far from the 7500 wall
+    p = propose_plan(
+        thesis="fade", side=Side.PUT, proposed_level=7500.0, gex=GEX,
+        expiry="2026-06-22", levels=lv,
+    )
+    assert p.confluence == []
+    assert any("standing alone" in c for c in p.corrections)
