@@ -65,3 +65,33 @@ class LiveMarketView:
 
     def now_et(self) -> datetime:
         return datetime.now(ET)
+
+
+class StreamMarketView:
+    """MarketView backed by the persistent MarketStore.
+
+    Reads in-memory streamed values (no per-tick network). Falls back to the
+    REST/one-shot LiveMarketView for any symbol the stream doesn't carry (e.g.
+    ES) or whenever a streamed value is stale — so the stream is an optimization,
+    never a hard dependency.
+    """
+
+    def __init__(self, store, fallback: Optional["LiveMarketView"] = None):
+        self.store = store
+        self.fallback = fallback or LiveMarketView()
+
+    def spot(self, symbol: str) -> Optional[float]:
+        v = self.store.spot(symbol)
+        if v is not None:
+            return v
+        return self.fallback.spot(symbol)
+
+    def option_mark(self, streamer_symbol: str) -> Optional[float]:
+        self.store.request_option(streamer_symbol)   # ensure it's subscribed
+        v = self.store.option_mid(streamer_symbol)
+        if v is not None:
+            return v
+        return self.fallback.option_mark(streamer_symbol)
+
+    def now_et(self) -> datetime:
+        return datetime.now(ET)
