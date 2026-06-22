@@ -13,7 +13,7 @@ and stops you out at the agreed level (when you'd be rationalizing "give it room
 - **Execution instrument:** SPXW options only, 5–10 contracts (size *derived* from stop distance).
 - **Hard daily max loss:** $5,000 — agent flattens and goes dark for the session on touch.
 - Standalone: all required market-data and execution code is **migrated into this repo**,
-  not imported from upstream. No runtime dependency on the upstream projects.
+  not imported from any sibling project. No runtime dependency on external projects.
 
 ## The control surface
 
@@ -42,7 +42,7 @@ All four planes built, standalone, 42 tests green. Execution defaults to **DRY-R
 (`WINTHORPE_LIVE=0`); the live lock stays off until the management loop has been
 watched fire on paper for a session.
 
-- **data** — GEX engine, live-verified bit-identical to upstream. ✅
+- **data** — GEX engine, live-verified bit-identical to the source implementation. ✅
 - **broker** — SPXW option path migrated verbatim (GLD/COST/KO fixes), 12 guards. ✅
 - **plan / risk** — signable plan + coupled sizing + $5k latching halt + kill switch. ✅
 - **engine / journal / agent** — arm→fire→manage loop, journal, level-correction. ✅

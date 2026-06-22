@@ -1,4 +1,4 @@
-"""Atomic JSON read/write helpers for Upstream producer state.
+"""Atomic JSON read/write helpers for producer state.
 
 The project has 65+ JSON/JSONL files under ``bot/logs/`` and ``agent/``
 written with ``path.write_text(json.dumps(...))``. That pattern is NOT
@@ -150,7 +150,7 @@ def append_jsonl(path: Path | str, row: dict[str, Any]) -> None:
     ``open(path, "a")`` + ``write()`` for a newline-terminated JSON row
     under Linux's default glibc is effectively atomic on small writes
     (<= PIPE_BUF == 4096 bytes) because the kernel serializes them
-    per-inode. Most Upstream JSONL rows are well under 4KB — an intraday
+    per-inode. Most producer JSONL rows are well under 4KB — an intraday
     gap observation is ~200 bytes, a flow-stack row is ~150 bytes. For
     rows that size, a raw append is safe.
 

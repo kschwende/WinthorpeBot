@@ -1,6 +1,6 @@
 """Tastytrade execution — SPXW long-option spine.
 
-Migrated from upstream-execution/bot/tastytrade_broker.py. This is the V4.1
+Migrated from the upstream execution broker. This is the V4.1
 option subsystem extracted on its own: single-leg SPXW call/put orders plus the
 OCO TP/SL bracket. The futures / equity / iron-condor / credit-spread builders
 were dropped — WinthorpeBot trades one instrument.

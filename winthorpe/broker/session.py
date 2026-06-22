@@ -2,7 +2,7 @@
 
 Canonical auth used by BOTH the data plane (index spot, option chains) and the
 broker plane (orders). One isolated session source — no credentials or session
-state shared with the upstream live stack.
+state shared with any other live stack.
 
 Mirrors the proven upstream pattern: a trading Session+Account, plus a separate
 cached market-data Session for index-spot lookups that resets and retries once

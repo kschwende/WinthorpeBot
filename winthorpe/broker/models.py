@@ -1,6 +1,6 @@
 """Order/position models the broker consumes.
 
-Trimmed from upstream-execution's models.py to the fields the SPXW option path
+Trimmed from the upstream models.py to the fields the SPXW option path
 actually uses. WinthorpeBot trades one instrument — long single-leg SPXW
 calls/puts — so the multi-strategy/futures fields are gone.
 """

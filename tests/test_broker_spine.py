@@ -1,6 +1,6 @@
 """Regression guards for the migrated broker spine.
 
-Ported from upstream-execution/tests/test_tastytrade_broker.py — these encode
+Ported from the upstream broker test suite — these encode
 the incident fixes the order path must never regress: the 2026-04-28 GLD
 routed-and-filled stamp, the 2026-05-06 COST phantom-fill, partial-fill
 handling, and the build-error reject shape. Adapted to WinthorpeBot's
