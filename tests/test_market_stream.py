@@ -39,12 +39,44 @@ def test_pending_option_subscriptions_are_drained_once():
 
 def test_snapshot_shape():
     s = MarketStore()
+    s.mark_starting()
     s.connected = True
     s.set_spot("SPX", 7500.0)
     snap = s.snapshot()
     assert snap["connected"] is True
+    assert snap["state"] == "live"          # connected + fresh tick
+    assert snap["stream_age_s"] is not None
     assert "SPX" in snap["spots"]
     assert snap["spots"]["SPX"]["price"] == 7500.0
+
+
+def test_stream_state_distinguishes_warming_from_dead():
+    import time as _t
+
+    s = MarketStore()
+    # Never started → down, not a false "disconnected".
+    assert s.stream_state() == "down"
+    assert s.snapshot()["state"] == "down"
+
+    # Started, handshake not yet complete, within grace → warming.
+    s.mark_starting()
+    assert s.stream_state() == "warming"
+
+    # Past the grace window without connecting → disconnected (crash/never-up).
+    s._started_mono = _t.monotonic() - 100.0
+    assert s.stream_state() == "disconnected"
+
+    # Connected but no fresh tick (off-hours / feed quiet) → stale.
+    s.connected = True
+    assert s.stream_state() == "stale"
+
+    # Connected with a fresh tick → live.
+    s.set_spot("SPX", 7500.0)
+    assert s.stream_state() == "live"
+
+    # Connected but the only tick has aged out → stale again.
+    s._spot["SPX"] = (7500.0, _t.monotonic() - 999.0)
+    assert s.stream_state() == "stale"
 
 
 class _FakeFallback:

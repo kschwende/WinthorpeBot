@@ -219,6 +219,18 @@ def engage_kill_switch(reason: str) -> dict:
 
 
 def main() -> None:
+    # Eager warm-up: instantiate the service (and its persistent stream) at
+    # startup so the DXLink handshake is well underway before the first tool
+    # call. Reads that bypass service() (get_gex, get_structural_levels) no
+    # longer leave the stream cold, and the first get_market_state never races
+    # a never-started stream. Failures here must not block serving — the stream
+    # is an optimization with REST fallback, so log and continue.
+    try:
+        service()
+        logger.info("service warmed; market stream starting")
+    except Exception:
+        logger.exception("eager service warm-up failed; continuing (REST fallback)")
+
     if os.environ.get("WINTHORPE_MCP_HTTP", "0") == "1":
         port = int(os.environ.get("WINTHORPE_MCP_PORT", "8190"))
         mcp.run(transport="http", host="127.0.0.1", port=port)

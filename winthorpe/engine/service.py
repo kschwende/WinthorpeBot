@@ -95,6 +95,9 @@ class DeskService:
         if self.stream and self.stream.is_alive():
             return
         self.stream = MarketStream(self.store)
+        # Mark the warm-up clock synchronously so a read between start() and the
+        # thread entering run() reports "warming", never a spurious "down".
+        self.store.mark_starting()
         self.stream.start()
 
     # -- actions -----------------------------------------------------------
@@ -136,6 +139,7 @@ class DeskService:
         return {
             "live": is_live(),
             "stream_connected": self.store.connected,
+            "stream_state": self.store.stream_state(),
             "plan_running": running,
             "current_plan": self._plan.plan_id if self._plan else None,
             "current_status": self._plan.status.value if self._plan else None,

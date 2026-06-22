@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SPOT_SYMBOLS = ("SPX", "SPY")
 STALE_AFTER_SEC = 10.0   # a value older than this is treated as absent
+WARMUP_GRACE_SEC = 8.0   # after start, "not yet connected" reads as warming, not dead
 
 
 class MarketStore:
@@ -34,6 +35,13 @@ class MarketStore:
         self._want_options: set[str] = set()
         self._subscribed_options: set[str] = set()
         self.connected: bool = False
+        self._started_mono: Optional[float] = None  # set when the stream thread starts
+
+    def mark_starting(self) -> None:
+        """Record the moment the stream thread begins its connect attempt. Lets
+        readers tell a cold warm-up apart from a crashed/never-started stream."""
+        with self._lock:
+            self._started_mono = time.monotonic()
 
     # -- writers (stream thread) -------------------------------------------
     def set_spot(self, symbol: str, price: float) -> None:
@@ -79,18 +87,56 @@ class MarketStore:
         with self._lock:
             self._want_options.add(streamer_symbol)
 
+    @staticmethod
+    def _derive_state(connected: bool, started: Optional[float],
+                      freshest_age: Optional[float], elapsed: Optional[float]) -> str:
+        """Map raw flags to a single honest state. A cold warm-up and a dead
+        stream both read connected=False with no spots — this separates them:
+          down         — stream never started (e.g. start_stream=False)
+          warming      — started, handshake not yet complete, within grace
+          disconnected — started but not connected past the grace window (crash)
+          stale        — connected but no fresh tick (off-hours, or feed gone quiet)
+          live         — connected and ticking within STALE_AFTER_SEC
+        """
+        if started is None:
+            return "down"
+        if not connected:
+            return "warming" if (elapsed is not None and elapsed <= WARMUP_GRACE_SEC) \
+                else "disconnected"
+        if freshest_age is None or freshest_age > STALE_AFTER_SEC:
+            return "stale"
+        return "live"
+
+    def stream_state(self) -> str:
+        """The single-word stream state (see ``_derive_state``)."""
+        now = time.monotonic()
+        with self._lock:
+            connected, started = self.connected, self._started_mono
+            ages = [now - t for _, t in self._spot.values()]
+        freshest = min(ages) if ages else None
+        elapsed = (now - started) if started is not None else None
+        return self._derive_state(connected, started, freshest, elapsed)
+
     def snapshot(self) -> dict:
         """Observability snapshot (ages in seconds), safe to serialize."""
         now = time.monotonic()
         with self._lock:
-            return {
-                "connected": self.connected,
-                "spots": {s: {"price": p, "age_s": round(now - t, 1)}
-                          for s, (p, t) in self._spot.items()},
-                "options": {s: {"mid": round((b + a) / 2, 2) if b > 0 and a > 0 else None,
-                                "age_s": round(now - t, 1)}
-                            for s, (b, a, t) in self._opt.items()},
-            }
+            connected, started = self.connected, self._started_mono
+            spots = {s: {"price": p, "age_s": round(now - t, 1)}
+                     for s, (p, t) in self._spot.items()}
+            options = {s: {"mid": round((b + a) / 2, 2) if b > 0 and a > 0 else None,
+                           "age_s": round(now - t, 1)}
+                       for s, (b, a, t) in self._opt.items()}
+            ages = [now - t for _, t in self._spot.values()]
+        freshest = min(ages) if ages else None
+        elapsed = (now - started) if started is not None else None
+        return {
+            "connected": connected,
+            "state": self._derive_state(connected, started, freshest, elapsed),
+            "stream_age_s": round(elapsed, 1) if elapsed is not None else None,
+            "spots": spots,
+            "options": options,
+        }
 
 
 class MarketStream(threading.Thread):

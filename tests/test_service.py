@@ -32,7 +32,9 @@ def test_status_and_risk_shapes():
     st = s.status()
     assert st["plan_running"] is False
     assert st["risk"]["can_open"] is True
+    assert st["stream_state"] == "down"          # start_stream=False → never started
     assert s.market_state()["connected"] is False
+    assert s.market_state()["state"] == "down"
     assert s.position_state() is None
 
 
