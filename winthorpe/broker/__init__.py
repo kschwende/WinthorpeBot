@@ -51,6 +51,10 @@ class DryRunBroker:
             "broker": "dryrun", "dry_run": True,
         }
 
+    def wait_for_fill(self, order_id, occ_symbol, max_attempts=5, delay_sec=1.0):
+        # Dry run has no real fill — engine falls back to the option mark.
+        return None
+
     def cancel_order(self, order_id: str) -> bool:
         logger.info("[DRY RUN] cancel_order %s", order_id)
         return True

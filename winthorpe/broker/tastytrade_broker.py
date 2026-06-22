@@ -345,6 +345,55 @@ class TastytradeBroker:
                 "order_filled_at": None, "error": str(exc), "broker": "tastytrade",
             }
 
+    def wait_for_fill(self, order_id, occ_symbol, max_attempts: int = 5,
+                      delay_sec: float = 1.0) -> dict[str, Any] | None:
+        """Resolve the real fill price after an OPTION_MARKET entry.
+
+        Ported from alert_consumer._v41_wait_for_fill — the workaround for orders
+        that return status=Routed/Filled before fill_price is populated, AND for
+        the SDK returning FILLED with an EMPTY .fills array (live-observed 2026-05-29).
+        Two sources, in order:
+          1. get_order(.fills) weighted-average fill price (preferred)
+          2. get_positions() average_open_price for the OCC (fallback when .fills
+             is empty but status is filled)
+        Returns {fill_price, total_filled_qty, source} or None on timeout.
+        """
+        import time as _time
+        if not order_id:
+            return None
+
+        async def _fetch_order():
+            session, account = await get_session_and_account()
+            return await account.get_order(session, order_id)
+
+        for attempt in range(max_attempts):
+            try:
+                o = _run_coro(_fetch_order)
+            except Exception as exc:
+                logger.debug("wait_for_fill poll #%d failed: %s", attempt + 1, exc)
+                _time.sleep(delay_sec)
+                continue
+            status = _normalize_status(getattr(o, "status", ""))
+            fills = list(getattr(o, "fills", []) or [])
+            if fills:
+                qty = sum(float(getattr(f, "quantity", 0) or 0) for f in fills)
+                wpx = sum(float(getattr(f, "fill_price", 0) or 0)
+                          * float(getattr(f, "quantity", 0) or 0) for f in fills)
+                if qty > 0:
+                    return {"fill_price": round(wpx / qty, 2),
+                            "total_filled_qty": int(qty), "source": "get_order_fills"}
+            if status == "filled" and occ_symbol:
+                positions = self.get_positions()
+                pos = next((p for p in positions
+                            if str(p.get("symbol", "")).strip() == occ_symbol), None)
+                if pos and float(pos.get("average_price", 0)) > 0 and int(pos.get("quantity", 0)) > 0:
+                    return {"fill_price": float(pos["average_price"]),
+                            "total_filled_qty": int(pos["quantity"]),
+                            "source": "positions_fallback"}
+            _time.sleep(delay_sec)
+        logger.warning("wait_for_fill timed out on order_id=%s occ=%s", order_id, occ_symbol)
+        return None
+
     def get_positions(self) -> list[dict[str, Any]]:
         async def _fetch() -> list[dict[str, Any]]:
             session, account = await get_session_and_account()

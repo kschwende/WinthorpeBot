@@ -164,14 +164,27 @@ class Engine:
             metadata={"occ_symbol": occ, "streamer_symbol": streamer},
         )
         result = self.broker.place_order(decision)
-        fill = result.get("fill_price") or result.get("entry_price") or entry_premium
-        self.journal.event(plan.plan_id, "entered", occ=occ, contracts=sizing.contracts,
-                           entry_premium=fill, worst_case_loss=sizing.worst_case_loss,
-                           order=result)
         if result.get("status") in ("rejected", "error"):
+            self.journal.event(plan.plan_id, "entry_rejected", occ=occ, order=result)
             plan.status = PlanStatus.REJECTED
             return None
 
+        # Resolve the REAL fill price (ported _v41_wait_for_fill); the OCO bracket
+        # and P&L key off this, not the pre-trade mark. Falls back to the mark only
+        # if the broker can't confirm a fill price in time.
+        fill = result.get("fill_price")
+        waiter = getattr(self.broker, "wait_for_fill", None)
+        if not fill and waiter:
+            enriched = waiter(result.get("order_id"), occ)
+            if enriched:
+                fill = enriched.get("fill_price")
+                self.journal.event(plan.plan_id, "fill_resolved", fill_price=fill,
+                                   source=enriched.get("source"))
+        fill = fill or result.get("entry_price") or entry_premium
+
+        self.journal.event(plan.plan_id, "entered", occ=occ, contracts=sizing.contracts,
+                           entry_premium=fill, worst_case_loss=sizing.worst_case_loss,
+                           order=result)
         self.risk.mark_opened()
         plan.status = PlanStatus.OPEN
 

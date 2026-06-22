@@ -169,3 +169,54 @@ def test_oco_bracket_rejects_non_positive_contracts():
 def test_factory_returns_dryrun_when_not_live(monkeypatch):
     monkeypatch.setenv("WINTHORPE_LIVE", "0")
     assert isinstance(create_broker(), DryRunBroker)
+
+
+# --- wait_for_fill (ported _v41_wait_for_fill) ------------------------------
+def _fill(qty, px):
+    class _F:
+        quantity = qty
+        fill_price = px
+    return _F()
+
+
+def test_wait_for_fill_weighted_average_from_fills():
+    class _Order:
+        status = "OrderStatus.FILLED"
+        fills = [_fill(3, 8.0), _fill(2, 8.5)]   # weighted avg = 8.2
+
+    class _Account:
+        async def get_order(self, session, oid):
+            return _Order()
+    with _patch_account(_Account()):
+        r = tastytrade_broker.TastytradeBroker().wait_for_fill("oid-1", OCC, max_attempts=1)
+    assert r["fill_price"] == 8.2
+    assert r["total_filled_qty"] == 5
+    assert r["source"] == "get_order_fills"
+
+
+def test_wait_for_fill_positions_fallback_when_fills_empty():
+    """SDK returns FILLED with empty .fills (2026-05-29) → use position avg price."""
+    class _Order:
+        status = "OrderStatus.FILLED"
+        fills = []
+
+    class _Account:
+        async def get_order(self, session, oid):
+            return _Order()
+        async def get_positions(self, session):
+            class _P:
+                symbol = OCC
+                instrument_type = "EQUITY_OPTION"
+                quantity = 5
+                quantity_direction = "Long"
+                average_open_price = 7.75
+                mark = 7.9
+            return [_P()]
+    with _patch_account(_Account()):
+        r = tastytrade_broker.TastytradeBroker().wait_for_fill("oid-2", OCC, max_attempts=1)
+    assert r["fill_price"] == 7.75
+    assert r["source"] == "positions_fallback"
+
+
+def test_wait_for_fill_returns_none_without_order_id():
+    assert tastytrade_broker.TastytradeBroker().wait_for_fill(None, OCC) is None
