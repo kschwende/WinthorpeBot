@@ -19,7 +19,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SPOT_SYMBOLS = ("SPX", "SPY")
+DEFAULT_SPOT_SYMBOLS = ("SPX", "SPY", "ES")
 STALE_AFTER_SEC = 10.0   # a value older than this is treated as absent
 WARMUP_GRACE_SEC = 8.0   # after start, "not yet connected" reads as warming, not dead
 
@@ -145,8 +145,22 @@ class MarketStream(threading.Thread):
     def __init__(self, store: MarketStore, spot_symbols=DEFAULT_SPOT_SYMBOLS):
         super().__init__(name="winthorpe-market-stream", daemon=True)
         self.store = store
-        self.spot_symbols = list(spot_symbols)
+        self.spot_symbols = list(spot_symbols)   # logical roots: SPX/SPY/ES
+        # Futures stream under a DXLink contract symbol (ES -> /ES:XCME), so the
+        # subscription list and the inbound event_symbol differ from the logical
+        # root. SYMBOL_MAP (bars.py) is the one source of truth for that mapping;
+        # _stx is what we subscribe, _stx_to_logical maps events back to roots.
+        from winthorpe.data.bars import SYMBOL_MAP
+        self._stx = [SYMBOL_MAP.get(s, s) for s in self.spot_symbols]
+        self._stx_to_logical = {SYMBOL_MAP.get(s, s): s for s in self.spot_symbols}
         self._stop = threading.Event()
+
+    def _logical(self, event_symbol: str) -> Optional[str]:
+        """Map an inbound spot event_symbol back to its logical root, or None if
+        it isn't one of our spot symbols (e.g. an option Quote). Tolerates the
+        ``{=1m}``-style suffix DXLink can append."""
+        return (self._stx_to_logical.get(event_symbol)
+                or self._stx_to_logical.get(event_symbol.split("{", 1)[0]))
 
     def stop(self) -> None:
         self._stop.set()
@@ -169,18 +183,20 @@ class MarketStream(threading.Thread):
 
         session, _ = await get_session_and_account()
         async with DXLinkStreamer(session) as streamer:
-            await streamer.subscribe(Trade, self.spot_symbols)
-            await streamer.subscribe(Quote, self.spot_symbols)
+            await streamer.subscribe(Trade, self._stx)
+            await streamer.subscribe(Quote, self._stx)
             self.store.connected = True
-            logger.info("market stream connected; spots=%s", self.spot_symbols)
+            logger.info("market stream connected; spots=%s (%s)",
+                        self.spot_symbols, self._stx)
 
             async def _consume_trades():
                 async for t in streamer.listen(Trade):
                     if self._stop.is_set():
                         return
+                    logical = self._logical(t.event_symbol)
                     px = getattr(t, "price", None)
-                    if px:
-                        self.store.set_spot(t.event_symbol, float(px))
+                    if logical and px:
+                        self.store.set_spot(logical, float(px))
 
             async def _consume_quotes():
                 async for q in streamer.listen(Quote):
@@ -188,12 +204,15 @@ class MarketStream(threading.Thread):
                         return
                     bid = float(getattr(q, "bid_price", 0) or 0)
                     ask = float(getattr(q, "ask_price", 0) or 0)
-                    sym = q.event_symbol
-                    if sym in self.spot_symbols and bid > 0 and ask > 0:
-                        # Quote mid as a spot fallback when Trade goes quiet.
-                        self.store.set_spot(sym, (bid + ask) / 2)
+                    logical = self._logical(q.event_symbol)
+                    if logical is not None:
+                        # A spot symbol: use the Quote mid as a spot fallback
+                        # when Trade goes quiet (keyed by logical root).
+                        if bid > 0 and ask > 0:
+                            self.store.set_spot(logical, (bid + ask) / 2)
                     else:
-                        self.store.set_quote(sym, bid, ask)
+                        # Not a spot symbol → an on-demand option Quote.
+                        self.store.set_quote(q.event_symbol, bid, ask)
 
             async def _manage_subs():
                 while not self._stop.is_set():

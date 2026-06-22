@@ -2,8 +2,20 @@
 
 import time
 
-from winthorpe.data.market_stream import MarketStore
+from winthorpe.data.market_stream import DEFAULT_SPOT_SYMBOLS, MarketStore, MarketStream
 from winthorpe.engine.market import StreamMarketView
+
+
+def test_marketstream_maps_es_streamer_symbol_to_logical():
+    # ES is streamed under the DXLink contract symbol /ES:XCME but keyed in the
+    # store by its logical root "ES", so triggers can name "ES" (no connection).
+    assert "ES" in DEFAULT_SPOT_SYMBOLS
+    ms = MarketStream(MarketStore())            # constructed, never started
+    assert "/ES:XCME" in ms._stx               # subscribes the contract symbol
+    assert ms._logical("/ES:XCME") == "ES"     # event_symbol -> logical root
+    assert ms._logical("/ES:XCME{=1m}") == "ES"  # tolerates DXLink suffix
+    assert ms._logical("SPX") == "SPX"         # cash index unchanged
+    assert ms._logical(".SPXW260622P7500") is None  # option Quote -> not a spot
 
 
 def test_store_spot_roundtrip_and_staleness():

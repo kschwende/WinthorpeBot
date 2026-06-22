@@ -29,8 +29,38 @@ class LiveMarketView:
 
     def spot(self, symbol: str) -> Optional[float]:
         from winthorpe.broker.session import market_data_mark
-        kind = "equities" if symbol.upper() == "SPY" else "indices"
-        return market_data_mark(symbol.upper(), kind)
+        from winthorpe.data.bars import SYMBOL_MAP
+        sym = symbol.upper()
+        stx = SYMBOL_MAP.get(sym, sym)
+        if stx.startswith("/"):
+            # Futures (ES/NQ): NOT an index — the "indices" market-data type
+            # won't resolve them (the bug this fixes). Pull a real-time last
+            # trade off DXLink using the same streamer symbol the bar source +
+            # live stream use, with yfinance as the fail-soft fallback.
+            return self._future_spot(sym, stx)
+        kind = "equities" if sym == "SPY" else "indices"
+        return market_data_mark(sym, kind)
+
+    def _future_spot(self, sym: str, streamer_symbol: str) -> Optional[float]:
+        from winthorpe.broker.session import _run_coro, get_session_and_account
+        from winthorpe.data.spot_source import (
+            fetch_spot_via_dxlink,
+            fetch_spot_via_yfinance,
+        )
+
+        async def _pull() -> Optional[float]:
+            from tastytrade.streamer import DXLinkStreamer
+            session, _ = await get_session_and_account()
+            async with DXLinkStreamer(session) as streamer:
+                return await fetch_spot_via_dxlink(streamer, streamer_symbol)
+
+        try:
+            v = _run_coro(_pull)
+            if v is not None:
+                return v
+        except Exception:
+            logger.warning("future spot DXLink pull failed for %s", sym, exc_info=True)
+        return fetch_spot_via_yfinance(sym)
 
     def option_mark(self, streamer_symbol: str) -> Optional[float]:
         """Mid of bid/ask for one option via a short DXLink Quote pull."""
