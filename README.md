@@ -38,5 +38,18 @@ and stops you out at the agreed level (when you'd be rationalizing "give it room
 
 ## Status
 
-Pre-alpha. Execution defaults to **DRY-RUN**; the live lock is off until the plan and
-management loop have been watched fire on paper.
+All four planes built, standalone, 42 tests green. Execution defaults to **DRY-RUN**
+(`WINTHORPE_LIVE=0`); the live lock stays off until the management loop has been
+watched fire on paper for a session.
+
+- **data** — GEX engine, live-verified bit-identical to upstream. ✅
+- **broker** — SPXW option path migrated verbatim (GLD/COST/KO fixes), 12 guards. ✅
+- **plan / risk** — signable plan + coupled sizing + $5k latching halt + kill switch. ✅
+- **engine / journal / agent** — arm→fire→manage loop, journal, level-correction. ✅
+
+### Known follow-ups before live
+- Port `_v41_wait_for_fill` for precise live fill-price (entry currently falls back
+  to the option mark when the broker response lacks `fill_price`).
+- Persist `SessionRisk` across process restarts (today it's in-memory per session).
+- A conversational runner/CLI entrypoint (deliberate → sign → `run_plan`).
+- A trading-hours shadow (DRY-RUN) session before the live lock comes off.
