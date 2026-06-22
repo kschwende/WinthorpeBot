@@ -1,0 +1,20 @@
+[project]
+name = "winthorpe"
+version = "0.0.1"
+description = "Agent-in-the-loop autonomous SPX trade executor. Human sets the thesis, agent structures and executes the plan."
+requires-python = ">=3.11"
+dependencies = [
+    # Pinned to match the upstream stack the execution code is migrated from.
+    # Do NOT bump tastytrade without re-testing the order path (12.3.1 broke auth/orders).
+    "tastytrade==12.2.0",
+    "pandas==2.3.3",
+    "numpy==2.4.2",
+    "python-dotenv==1.2.2",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

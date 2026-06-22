@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Secrets / creds — NEVER commit
+.env
+*.env
+secrets.*
+config.local.*
+.winthorpe_live_enabled*
+
+# Runtime state / journals (local, not source)
+state/
+logs/
+journal/*.jsonl
+*.log
