@@ -7,6 +7,26 @@ a trade plan together; once you sign it, you are deliberately locked out of the 
 and the stop. The agent fires when the agreed condition hits (not when you get itchy)
 and stops you out at the agreed level (when you'd be rationalizing "give it room").
 
+## Overview
+
+WinthorpeBot is an agent-in-the-loop execution system for 0DTE SPX (SPXW) options. The idea
+is simple: the human keeps the judgment, and the bot takes the emotion out of the two places
+it costs the most — entry timing and stopping out. You write the plan (the thesis, the level
+you're trading, your stop, target, and the condition that voids the idea); the system pulls
+live dealer-gamma positioning (the call/put "walls") and prior-day/overnight market structure
+(PDH/PDL, ONH/ONL, session & weekly VWAP) to sanity-check it, snaps your level to the *real*
+live wall, and sizes the position off the stop distance. Once you sign the plan it arms and
+runs hands-off — entering on your trigger, managing a mechanical bracket (profit target / stop
+/ time-stop), and bailing automatically the moment price invalidates the thesis. It trades one
+position at a time behind a hard $5k daily-loss halt, runs entirely on a free real-time
+tastytrade feed, and is model-agnostic (the reasoning is supplied by whatever agent/LLM you
+point at it, not baked in). It's currently in dry-run/paper mode by default. Importantly, it's
+an **execution-and-risk-discipline harness, not a signal service or black box** — there's no
+secret alpha hidden inside. The edge is *your* read of the market; the bot's only job is to
+execute it without flinching and refuse to let you blow up.
+
+*Access is private and by invitation — reach out if you'd like to be added to the repo.*
+
 ## Scope (v1)
 
 - **Triggers / analysis:** SPX, SPY, ES.
