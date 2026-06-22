@@ -110,7 +110,21 @@ class Engine:
         if st is None:
             return  # rejected/infeasible — enter() already journaled why
 
-        # MANAGE — until an exit fires.
+        self._manage_loop(plan, st, poll_interval, sleep_fn)
+
+    def resume_management(self, plan: TradePlan, st: OpenState,
+                          poll_interval: float = 1.0,
+                          sleep_fn: Callable[[float], None] = time.sleep) -> None:
+        """Re-attach the management loop to a position recovered after a restart
+        (skips arm/enter — the position is already open and the OCO already live)."""
+        plan.status = PlanStatus.OPEN
+        self.open_state = st
+        self.journal.event(plan.plan_id, "management_resumed", occ=st.occ_symbol)
+        self._manage_loop(plan, st, poll_interval, sleep_fn)
+
+    def _manage_loop(self, plan: TradePlan, st: OpenState,
+                     poll_interval: float, sleep_fn: Callable[[float], None]) -> None:
+        """Poll the exits until one fires. Shared by run_plan and resume_management."""
         while True:
             if self.risk.killed:
                 self.close(plan, st, "kill_switch")
@@ -202,6 +216,13 @@ class Engine:
             self.journal.event(plan.plan_id, "oco_failed", tp=tp, sl=sl)
 
         self.open_state = OpenState(occ, streamer, sizing.contracts, fill, oco_id)
+        # Persist enough to recover this live trade if the process restarts.
+        self.risk.set_live_position({
+            "open_state": {"occ_symbol": occ, "streamer_symbol": streamer,
+                           "contracts": sizing.contracts, "entry_premium": fill,
+                           "oco_id": oco_id},
+            "plan": plan.to_dict(),
+        })
         return self.open_state
 
     # -- management --------------------------------------------------------

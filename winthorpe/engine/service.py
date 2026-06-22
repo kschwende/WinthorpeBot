@@ -32,14 +32,64 @@ class DeskService:
         self.store = MarketStore()
         self.stream: Optional[MarketStream] = None
         self.market = StreamMarketView(self.store)
-        self.risk = SessionRisk()
         self.journal = Journal()
+        # Resume today's persisted risk (budget, halt, open-position context) if a
+        # prior process ran this session; fresh on a new session date.
+        self.risk = SessionRisk.load_or_new(self.journal.session_date)
         self.broker = create_broker()
         self.engine = Engine(self.market, self.broker, self.risk, self.journal)
         self._plan: Optional[TradePlan] = None
         self._thread: Optional[threading.Thread] = None
+        self.needs_reconcile: bool = False
+        self.reconcile_note: str = ""
+        if self.risk.live_position is not None:
+            self._reconcile_open_position(self.risk.live_position)
         if start_stream:
             self.start_stream()
+
+    def _reconcile_open_position(self, lp: dict) -> None:
+        """A persisted open position survived a restart. Recover against broker
+        truth: if still held, re-attach the management loop; if gone (live) flag
+        for human resolution rather than guessing P&L."""
+        from winthorpe.engine.engine import OpenState
+
+        osd = lp.get("open_state", {})
+        st = OpenState(osd.get("occ_symbol", ""), osd.get("streamer_symbol", ""),
+                       int(osd.get("contracts", 0)), float(osd.get("entry_premium", 0)),
+                       osd.get("oco_id"))
+        try:
+            plan = TradePlan(**lp["plan"])
+        except Exception as exc:
+            self.needs_reconcile = True
+            self.reconcile_note = f"could not rebuild plan from persisted state: {exc}"
+            logger.error(self.reconcile_note)
+            return
+        plan.status = PlanStatus.OPEN
+        self._plan = plan
+
+        if is_live():
+            positions = self.broker.get_positions()
+            held = any(str(p.get("symbol", "")).strip() == st.occ_symbol
+                       and int(p.get("quantity", 0)) != 0 for p in positions)
+            if not held:
+                # Closed out-of-band while we were down — can't trust P&L. Block
+                # new entries until the human reconciles (broker-truth doctrine).
+                self.needs_reconcile = True
+                self.reconcile_note = (
+                    f"persisted position {st.occ_symbol} not held at broker after "
+                    f"restart — manual reconcile required (check fills, set realized P&L)"
+                )
+                self.journal.event(plan.plan_id, "reconcile_needed", occ=st.occ_symbol,
+                                   note=self.reconcile_note)
+                logger.warning(self.reconcile_note)
+                return
+        # Live-and-held, or dry-run: re-attach the management loop.
+        self._thread = threading.Thread(
+            target=self.engine.resume_management, args=(plan, st),
+            name=f"resume-{plan.plan_id}", daemon=True,
+        )
+        self._thread.start()
+        logger.info("resumed management of %s after restart", st.occ_symbol)
 
     def start_stream(self) -> None:
         if self.stream and self.stream.is_alive():
@@ -54,6 +104,8 @@ class DeskService:
         Returns an acceptance dict; rejects if a play is already live or the
         session can't open.
         """
+        if self.needs_reconcile:
+            return {"accepted": False, "reason": f"reconcile required: {self.reconcile_note}"}
         if self._thread and self._thread.is_alive():
             return {"accepted": False, "reason": "a plan is already running"}
         ok, why = self.risk.can_open()
@@ -87,6 +139,8 @@ class DeskService:
             "plan_running": running,
             "current_plan": self._plan.plan_id if self._plan else None,
             "current_status": self._plan.status.value if self._plan else None,
+            "needs_reconcile": self.needs_reconcile,
+            "reconcile_note": self.reconcile_note,
             "risk": self.session_risk(),
         }
 

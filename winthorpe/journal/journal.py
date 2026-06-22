@@ -16,14 +16,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from winthorpe.config import JOURNAL_DIR
+from winthorpe import config
 
 logger = logging.getLogger(__name__)
 
 
 class Journal:
-    def __init__(self, session_date: Optional[str] = None, journal_dir: Path = JOURNAL_DIR):
-        self.dir = Path(journal_dir)
+    def __init__(self, session_date: Optional[str] = None, journal_dir: Optional[Path] = None):
+        # JOURNAL_DIR read dynamically (None) so tests can redirect it.
+        self.dir = Path(journal_dir if journal_dir is not None else config.JOURNAL_DIR)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.session_date = session_date or datetime.now(UTC).date().isoformat()
         self.path = self.dir / f"plays-{self.session_date}.jsonl"
