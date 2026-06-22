@@ -46,10 +46,28 @@ watched fire on paper for a session.
 - **broker** — SPXW option path migrated verbatim (GLD/COST/KO fixes), 12 guards. ✅
 - **plan / risk** — signable plan + coupled sizing + $5k latching halt + kill switch. ✅
 - **engine / journal / agent** — arm→fire→manage loop, journal, level-correction. ✅
+- **stream / service / mcp** — persistent DXLink stream, DeskService, FastMCP server. ✅
+
+### Harness (MCP)
+
+Single process in `.venv` (has tastytrade + fastmcp). Any MCP harness — Claude Code,
+OpenClaw, a custom agent — drives the desk through 8 tools (reads: `get_gex`,
+`get_status`, `get_session_risk`, `get_market_state`, `get_position_state`; reason:
+`propose_plan`; act: `sign_and_arm_plan`, `engage_kill_switch`). The harness supplies
+the LLM; this process holds the deterministic core + the persistent stream + the risk
+floor. No `winthorpe/` module imports an LLM SDK — fully model-agnostic.
+
+```bash
+.venv/bin/python -m winthorpe.mcp.server                      # stdio (local harness)
+WINTHORPE_MCP_HTTP=1 .venv/bin/python -m winthorpe.mcp.server # http :8190
+```
+
+Agent role is position-state-dependent by construction: while a plan runs there is no
+"adjust live trade" tool (read telemetry + kill only); between plans the agent proposes
+and arms, but signing always passes validation + the risk gate it can't bypass.
 
 ### Known follow-ups before live
 - Port `_v41_wait_for_fill` for precise live fill-price (entry currently falls back
   to the option mark when the broker response lacks `fill_price`).
 - Persist `SessionRisk` across process restarts (today it's in-memory per session).
-- A conversational runner/CLI entrypoint (deliberate → sign → `run_plan`).
 - A trading-hours shadow (DRY-RUN) session before the live lock comes off.
