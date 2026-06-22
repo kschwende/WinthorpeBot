@@ -48,6 +48,8 @@ class StructuralLevels:
     or30_low: Optional[float] = None
     rth_high: Optional[float] = None
     rth_low: Optional[float] = None
+    session_vwap: Optional[float] = None     # today RTH, SPY-derived → SPX terms
+    weekly_vwap: Optional[float] = None      # this week RTH, Monday-anchored
     prior_session_date: Optional[str] = None
 
     def as_named(self) -> dict[str, float]:
@@ -58,6 +60,7 @@ class StructuralLevels:
             "OR15H": self.or15_high, "OR15L": self.or15_low,
             "OR30H": self.or30_high, "OR30L": self.or30_low,
             "RTH_HIGH": self.rth_high, "RTH_LOW": self.rth_low,
+            "VWAP": self.session_vwap, "WVWAP": self.weekly_vwap,
         }
         return {k: v for k, v in names.items() if v is not None}
 
@@ -76,6 +79,19 @@ def _in_rth(ts: datetime) -> bool:
     return RTH_OPEN <= ts.timetz().replace(tzinfo=None) < RTH_CLOSE
 
 
+def _vwap(bars: list) -> Optional[float]:
+    """Volume-weighted average of typical price (H+L+C)/3. None if no volume."""
+    num = den = 0.0
+    for c in bars:
+        v = float(c.volume or 0)
+        if v <= 0:
+            continue
+        typical = (float(c.high) + float(c.low) + float(c.close)) / 3.0
+        num += typical * v
+        den += v
+    return (num / den) if den > 0 else None
+
+
 def levels_from_bars(
     *,
     spx_bars: list,
@@ -83,9 +99,14 @@ def levels_from_bars(
     prev_close: Optional[float],
     now_et: datetime,
     basis: float = 0.0,
+    spy_bars: Optional[list] = None,
+    spy_to_spx: float = 10.0,
 ) -> StructuralLevels:
     """Pure level extraction from candle lists. Candles are namedtuples with
-    ``.ts`` (ET datetime), ``.high``, ``.low``, ``.close``. No I/O."""
+    ``.ts`` (ET datetime), ``.high``, ``.low``, ``.close``, ``.volume``. No I/O.
+
+    VWAP is derived from ``spy_bars`` (SPX cash has no volume) and scaled to SPX
+    terms by ``spy_to_spx`` (the live SPX/SPY ratio, ~10)."""
     today = now_et.date()
     out = StructuralLevels(asof=now_et.isoformat(), basis=round(basis, 2),
                            pdc=prev_close)
@@ -130,6 +151,19 @@ def levels_from_bars(
         out.onh = round(max(c.high for c in on_bars) + basis, 2)
         out.onl = round(min(c.low for c in on_bars) + basis, 2)
 
+    # --- VWAP (SPY RTH, scaled to SPX terms) --------------------------------
+    # Session = today's RTH; weekly = this ISO week (Monday-anchored) RTH.
+    if spy_bars:
+        week_start = today - timedelta(days=today.weekday())  # Monday
+        sess = [c for c in spy_bars if _in_rth(c.ts) and c.ts.date() == today]
+        week = [c for c in spy_bars if _in_rth(c.ts) and week_start <= c.ts.date() <= today]
+        sv = _vwap(sess)
+        wv = _vwap(week)
+        if sv is not None:
+            out.session_vwap = round(sv * spy_to_spx, 2)
+        if wv is not None:
+            out.weekly_vwap = round(wv * spy_to_spx, 2)
+
     return out
 
 
@@ -152,16 +186,20 @@ def fetch_structural_levels(now_et: Optional[datetime] = None) -> StructuralLeve
 
     spx_bars = asyncio.run(_pull("SPX"))
     es_bars = asyncio.run(_pull("ES"))
+    spy_bars = asyncio.run(_pull("SPY"))    # has volume → VWAP source
 
     prev_close = _spx_prev_close()          # dedicated field, not the live mark
     # Basis = SPX spot − latest ES bar close (uses bars already pulled; the
     # futures market-data symbol is finicky, the bar close is reliable).
     spx_spot = market_data_mark("SPX", "indices")
+    spy_spot = market_data_mark("SPY", "equities")
     last_es = max(es_bars, key=lambda c: c.ts).close if es_bars else None
     basis = (spx_spot - last_es) if (spx_spot and last_es) else 0.0
+    spy_to_spx = (spx_spot / spy_spot) if (spx_spot and spy_spot) else 10.0
 
     return levels_from_bars(spx_bars=spx_bars, es_bars=es_bars,
-                            prev_close=prev_close, now_et=now, basis=basis)
+                            prev_close=prev_close, now_et=now, basis=basis,
+                            spy_bars=spy_bars, spy_to_spx=spy_to_spx)
 
 
 def _spx_prev_close() -> Optional[float]:

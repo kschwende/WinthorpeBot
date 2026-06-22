@@ -10,9 +10,9 @@ ET = ZoneInfo("America/New_York")
 Candle = namedtuple("Candle", ["symbol", "ts", "open", "high", "low", "close", "volume"])
 
 
-def _c(sym, y, mo, d, h, mi, hi, lo):
+def _c(sym, y, mo, d, h, mi, hi, lo, vol=0):
     ts = datetime(y, mo, d, h, mi, tzinfo=ET)
-    return Candle(sym, ts, (hi + lo) / 2, hi, lo, (hi + lo) / 2, 0)
+    return Candle(sym, ts, (hi + lo) / 2, hi, lo, (hi + lo) / 2, vol)
 
 
 def test_prior_day_and_overnight_and_opening_range():
@@ -59,6 +59,31 @@ def test_confluence_scan():
     assert names == ["ONH", "PDH"]        # nearest first
     assert hits[0]["distance"] == 2.0
     assert "PDC" not in names
+
+
+def test_session_and_weekly_vwap_from_spy():
+    now = datetime(2026, 6, 24, 11, 0, tzinfo=ET)   # Wednesday
+    # SPY bars: Mon, Tue, Wed RTH. Flat each day so VWAP == that price level.
+    # typical = (H+L+C)/3; use H==L so typical == that value.
+    spy = [
+        _c("SPY", 2026, 6, 22, 10, 0, 750.0, 750.0, vol=100),   # Mon @ 750
+        _c("SPY", 2026, 6, 23, 10, 0, 752.0, 752.0, vol=100),   # Tue @ 752
+        _c("SPY", 2026, 6, 24, 10, 0, 748.0, 748.0, vol=300),   # Wed @ 748 (heavier)
+    ]
+    lv = levels_from_bars(spx_bars=[], es_bars=[], prev_close=None,
+                          now_et=now, spy_bars=spy, spy_to_spx=10.0)
+    # Session VWAP (Wed only) = 748 × 10 = 7480.
+    assert lv.session_vwap == 7480.0
+    # Weekly VWAP (Mon..Wed) = (750·100 + 752·100 + 748·300)/500 × 10
+    expected = (750 * 100 + 752 * 100 + 748 * 300) / 500 * 10
+    assert lv.weekly_vwap == round(expected, 2)
+
+
+def test_vwap_ignores_zero_volume_and_participates_in_confluence():
+    lv = StructuralLevels(session_vwap=7505.0, weekly_vwap=7490.0)
+    hits = {h["name"] for h in lv.confluence(7503.0, tolerance=5.0)}
+    assert "VWAP" in hits            # 7505 within 5pt of 7503
+    assert "WVWAP" not in hits       # 7490 is 13pt away
 
 
 def test_empty_bars_yield_nulls_but_keeps_pdc():
