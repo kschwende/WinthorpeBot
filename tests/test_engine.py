@@ -37,7 +37,9 @@ class FakeBroker:
     def __init__(self):
         self.orders = []
         self.complex = []
+        self.protective = []
         self.cancels = []
+        self.swept = 0
         self.held = True
         self.occ = None
 
@@ -55,8 +57,12 @@ class FakeBroker:
         self.complex.append(co)
         return {"complex_order_id": "oco-1", "status": "received"}
 
+    def place_protective_stop(self, occ, contracts, sl_price):
+        self.protective.append((occ, contracts, sl_price))
+        return {"order_id": "stop-1", "status": "received"}
+
     def cancel_complex_order(self, oid): self.cancels.append(oid); return True
-    def cancel_working_orders_for(self, u): return []
+    def cancel_working_orders_for(self, u): self.swept += 1; return []
     def get_positions(self):
         if self.held and self.occ:
             return [{"symbol": self.occ, "quantity": 5}]
@@ -154,6 +160,9 @@ def test_trailing_stop_rides_then_exits_on_pullback():
     with patch("winthorpe.engine.engine.resolve_spxw_option", return_value=_FAKE_RESOLVE):
         st = eng.enter(plan)
     assert st.high_water == 11.0 and st.trail_armed is False
+    # Trailing plan drops the OCO TP leg → only a protective stop ($11×0.75=$8.25).
+    assert len(b.complex) == 0
+    assert b.protective == [(_FAKE_RESOLVE["occ_symbol"], st.contracts, 8.25)]
 
     # Still below activation ($13.20) → no trail, not armed.
     m._mark = 13.0
@@ -177,7 +186,9 @@ def test_trailing_stop_rides_then_exits_on_pullback():
 
     pnl = eng.close(plan, st, "trail_stop")
     assert pnl == round((14.0 - 11.0) * 100 * st.contracts, 2)   # captured the run
-    assert "oco-1" in b.cancels                                   # ceiling OCO cancelled
+    assert b.cancels == []          # no OCO to cancel (TP leg was dropped)
+    assert b.swept == 1             # protective stop swept via working-orders cancel
+    assert b.held is False          # market-closed
 
 
 def test_no_trail_by_default_is_backward_compatible():

@@ -209,18 +209,32 @@ class Engine:
         self.risk.mark_opened()
         plan.status = PlanStatus.OPEN
 
-        # Mechanical OCO bracket off the fill premium.
-        tp = tp_premium_from_tp_pct(fill, plan.tp_pct)
+        # Broker-side mechanical exit off the fill premium. With a trailing stop
+        # the engine owns the upside, so we DROP the OCO take-profit leg and place
+        # only the protective stop (the downside floor that survives engine death).
+        # Without a trail, place the full OCO bracket (fixed TP + SL).
         sl = stop_premium_from_sl_pct(fill, plan.sl_pct)
         oco_id = None
-        try:
-            bracket = _build_oco_bracket(occ, sizing.contracts, tp, sl)
-            oco_res = self.broker.place_complex_order(bracket)
-            oco_id = oco_res.get("complex_order_id")
-            self.journal.event(plan.plan_id, "oco_placed", tp=tp, sl=sl, oco=oco_res)
-        except Exception:
-            logger.exception("OCO bracket placement failed for %s", plan.plan_id)
-            self.journal.event(plan.plan_id, "oco_failed", tp=tp, sl=sl)
+        if plan.trail_pct is not None:
+            try:
+                res = self.broker.place_protective_stop(occ, sizing.contracts, sl)
+                oco_id = res.get("order_id")
+                self.journal.event(plan.plan_id, "protective_stop_placed", sl=sl,
+                                   trail_activate_pct=plan.trail_activate_pct,
+                                   trail_pct=plan.trail_pct, order=res)
+            except Exception:
+                logger.exception("protective stop placement failed for %s", plan.plan_id)
+                self.journal.event(plan.plan_id, "protective_stop_failed", sl=sl)
+        else:
+            tp = tp_premium_from_tp_pct(fill, plan.tp_pct)
+            try:
+                bracket = _build_oco_bracket(occ, sizing.contracts, tp, sl)
+                oco_res = self.broker.place_complex_order(bracket)
+                oco_id = oco_res.get("complex_order_id")
+                self.journal.event(plan.plan_id, "oco_placed", tp=tp, sl=sl, oco=oco_res)
+            except Exception:
+                logger.exception("OCO bracket placement failed for %s", plan.plan_id)
+                self.journal.event(plan.plan_id, "oco_failed", tp=tp, sl=sl)
 
         self.open_state = OpenState(occ, streamer, sizing.contracts, fill, oco_id)
         # Persist enough to recover this live trade if the process restarts.
@@ -282,8 +296,11 @@ class Engine:
         """Flatten and record. Cancel-before-replace, then market sell-to-close
         (unless the OCO already did it). Returns realized P&L."""
         if reason != "oco_filled":
-            # Cancel the bracket + any stuck working order before closing.
-            if st.oco_id:
+            # Cancel the broker-side protective order(s) before market-close. An
+            # OCO bracket cancels via the complex endpoint; a standalone trailing
+            # protective stop has no complex id, so the working-order sweep takes
+            # it (and is belt-and-suspenders for the OCO too).
+            if st.oco_id and plan.trail_pct is None:
                 self.broker.cancel_complex_order(st.oco_id)
             self.broker.cancel_working_orders_for(EXEC_INSTRUMENT)
             close_decision = TradeDecision(

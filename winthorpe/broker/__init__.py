@@ -51,6 +51,15 @@ class DryRunBroker:
             "broker": "dryrun", "dry_run": True,
         }
 
+    def place_protective_stop(self, occ_symbol, contracts, sl_price) -> dict[str, Any]:
+        logger.info("[DRY RUN] place_protective_stop %s x%s @ %s",
+                    occ_symbol, contracts, sl_price)
+        return {
+            "order_id": f"DRYRUN-STOP-{_now_iso()}",
+            "status": "simulated", "order_placed_at": _now_iso(),
+            "stop_price": sl_price, "broker": "dryrun", "dry_run": True,
+        }
+
     def wait_for_fill(self, order_id, occ_symbol, max_attempts=5, delay_sec=1.0):
         # Dry run has no real fill — engine falls back to the option mark.
         return None

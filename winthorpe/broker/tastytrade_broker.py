@@ -230,6 +230,34 @@ def _build_oco_bracket(occ_symbol: str, contracts: int, tp_price: float, sl_pric
     return NewComplexOrder(type=ComplexOrderType.OCO, orders=[tp_order, sl_order])
 
 
+def _build_protective_stop(occ_symbol: str, contracts: int, sl_price: float):
+    """Build a STANDALONE protective stop: SELL_TO_CLOSE STOP @ sl, NO take-profit
+    leg. Used when a plan carries a trailing stop — the engine governs the upside
+    (the trail), so the only broker-side order is the mechanical downside floor
+    that survives engine death. (Contrast _build_oco_bracket, which also pins a TP.)
+    """
+    from tastytrade.instruments import InstrumentType
+    from tastytrade.order import (
+        Leg, NewOrder, OrderAction, OrderTimeInForce, OrderType,
+    )
+    if contracts <= 0:
+        raise ValueError(f"non-positive contracts: {contracts}")
+    if sl_price <= 0:
+        raise ValueError(f"non-positive stop price: {sl_price}")
+    leg = Leg(
+        instrument_type=InstrumentType.EQUITY_OPTION,
+        symbol=occ_symbol,
+        action=OrderAction.SELL_TO_CLOSE,
+        quantity=int(contracts),
+    )
+    return NewOrder(
+        time_in_force=OrderTimeInForce.DAY,
+        order_type=OrderType.STOP,
+        stop_trigger=Decimal(str(round(float(sl_price), 2))),
+        legs=[leg],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Broker adapter
 # ---------------------------------------------------------------------------
@@ -540,6 +568,47 @@ class TastytradeBroker:
                 "order_placed_at": _now_iso(), "error": str(exc),
                 "reject_reason": str(exc), "broker": "tastytrade",
             }
+
+    def place_protective_stop(self, occ_symbol: str, contracts: int,
+                              sl_price: float) -> dict[str, Any]:
+        """Place a standalone protective STOP (sell-to-close, no TP leg). For
+        trailing-stop plans the engine owns the upside exit, so only the downside
+        floor goes to the broker. Returns an audit-shaped dict with order_id."""
+        try:
+            order = _build_protective_stop(occ_symbol, contracts, sl_price)
+        except ValueError as exc:
+            logger.error("tastytrade broker: protective stop build failed: %s", exc)
+            return {"order_id": None, "status": "error", "order_placed_at": _now_iso(),
+                    "reject_reason": str(exc), "error": str(exc), "broker": "tastytrade"}
+
+        async def _submit() -> dict[str, Any]:
+            session, account = await get_session_and_account()
+            order_placed_at = _now_iso()
+            try:
+                response = await account.place_order(session, order, dry_run=False)
+            except Exception as exc:
+                logger.exception("tastytrade broker: place_protective_stop failed")
+                return {"order_id": None, "status": "error",
+                        "order_placed_at": order_placed_at, "reject_reason": str(exc),
+                        "error": str(exc), "broker": "tastytrade"}
+            tt_order = getattr(response, "order", None)
+            raw_status = getattr(tt_order, "status", "unknown")
+            return {
+                "order_id": getattr(tt_order, "id", None),
+                "status": raw_status,
+                "order_status": str(raw_status or "").lower() or None,
+                "order_placed_at": order_placed_at,
+                "errors": [str(e) for e in (getattr(response, "errors", []) or [])],
+                "broker": "tastytrade",
+                "stop_price": round(float(sl_price), 2),
+            }
+
+        try:
+            return _run_coro(_submit)
+        except Exception as exc:
+            logger.exception("tastytrade broker: place_protective_stop outer failed")
+            return {"order_id": None, "status": "error", "order_placed_at": _now_iso(),
+                    "reject_reason": str(exc), "error": str(exc), "broker": "tastytrade"}
 
     def cancel_complex_order(self, complex_order_id: str) -> bool:
         """Cancel an OCO bracket. Idempotent — True if cancelled, False on any
