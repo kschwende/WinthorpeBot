@@ -3,12 +3,26 @@
 from unittest.mock import patch
 
 from winthorpe.engine.service import DeskService
+from winthorpe.journal.journal import Journal
 from winthorpe.plan.schema import Comparator, Condition, Side, TradePlan
 from winthorpe.risk.limits import SessionRisk, session_path
 
 _FAKE_RESOLVE = {"occ_symbol": "SPXW  260622P07525000",
                  "streamer_symbol": ".SPXW260622P7525",
                  "strike": 7525.0, "expiry": "2026-06-22", "right": "P"}
+
+# DeskService loads risk for TODAY's session date — seed reconcile state under the
+# same date (a hardcoded date rots the moment the calendar rolls past it).
+_TODAY = Journal().session_date
+
+
+def _no_network_market(monkeypatch):
+    """Stub the LiveMarketView fallback so the reconcile/resume path never opens a
+    real DXLink connection on a store miss (keeps these unit tests hermetic)."""
+    monkeypatch.setattr("winthorpe.engine.market.LiveMarketView.spot",
+                        lambda self, symbol: None)
+    monkeypatch.setattr("winthorpe.engine.market.LiveMarketView.option_mark",
+                        lambda self, streamer: None)
 
 
 def _plan(**over):
@@ -75,19 +89,23 @@ def _seed_open_position_state(date):
 
 
 def test_dryrun_restart_resumes_management(monkeypatch):
-    s0 = _seed_open_position_state("2026-06-22")
+    _no_network_market(monkeypatch)
+    s0 = _seed_open_position_state(_TODAY)
     assert s0.open_position is True
     # New DeskService (dry-run) sees the persisted open position and re-attaches.
     s = DeskService(start_stream=False)
     if s._thread:
         s._thread.join(timeout=5)
-    # Dry-run resume_management: get_positions() == [] → oco_filled → closes flat.
+    # Dry-run resume: the fresh paper broker has no record of the resumed position
+    # → get_positions() == [] → oco_filled → closes flat (at entry premium, since
+    # the stubbed market returns no mark).
     assert s.risk.open_position is False
     assert s.needs_reconcile is False
 
 
 def test_live_restart_flags_reconcile_when_position_gone(monkeypatch):
-    _seed_open_position_state("2026-06-22")
+    _no_network_market(monkeypatch)
+    _seed_open_position_state(_TODAY)
     # Force the live branch; the dry-run broker reports no positions → "gone".
     monkeypatch.setattr("winthorpe.engine.service.is_live", lambda: True)
     s = DeskService(start_stream=False)
