@@ -172,7 +172,7 @@ def validate_plan(plan: dict) -> dict:
 # --- deliberation: turn a thesis into a corrected draft ---------------------
 @mcp.tool
 async def propose_plan(thesis: str, side: str, proposed_level: float,
-                       expiry: str, tp_pct: float = 0.20, sl_pct: float = -0.25,
+                       expiry: str, tp_pct: float = 0.30, sl_pct: float = -0.25,
                        time_stop_et: str = "15:45", product: str = "SPX") -> dict:
     """Correct a thesis against live GEX and return a DRAFT plan + the
     corrections (e.g. 'you said 7530, the call wall is 7500'). Does NOT arm —
