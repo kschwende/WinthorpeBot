@@ -36,7 +36,7 @@ class DeskService:
         # Resume today's persisted risk (budget, halt, open-position context) if a
         # prior process ran this session; fresh on a new session date.
         self.risk = SessionRisk.load_or_new(self.journal.session_date)
-        self.broker = create_broker()
+        self.broker = create_broker(self.market)
         self.engine = Engine(self.market, self.broker, self.risk, self.journal)
         self._plan: Optional[TradePlan] = None
         self._thread: Optional[threading.Thread] = None

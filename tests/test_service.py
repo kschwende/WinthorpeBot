@@ -55,8 +55,10 @@ def test_submit_rejected_when_invalid_plan():
 
 def test_full_run_through_service():
     s = _svc()
-    # Seed the store so the trigger is already true and the option has a mark.
-    s.store.set_spot("SPX", 7530.0)
+    # Trigger already true AND past invalidation (7536): the paper broker now HOLDS
+    # the position (no instant phantom close), so the plan enters and then exits on
+    # the engine-monitored invalidation — a deterministic, real exit.
+    s.store.set_spot("SPX", 7537.0)
     s.store.set_quote(".SPXW260622P7525", 7.9, 8.1)   # mid 8.0
 
     with patch("winthorpe.engine.engine.resolve_spxw_option", return_value=_FAKE_RESOLVE):
