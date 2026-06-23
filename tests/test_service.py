@@ -72,6 +72,22 @@ def test_full_run_through_service():
     assert s.position_state() is None          # flat again
 
 
+def test_status_surfaces_orphan_warning_when_stream_down(monkeypatch):
+    s = _svc()                                  # start_stream=False → stream down
+    # No siblings → no warning.
+    monkeypatch.setattr("winthorpe.data.process_guard.find_sibling_servers",
+                        lambda *a, **k: [])
+    assert "stream_warning" not in s.status()
+    # A sibling server + stream down → surfaced (read-only diagnostic).
+    monkeypatch.setattr("winthorpe.data.process_guard.find_sibling_servers",
+                        lambda *a, **k: [424242])
+    warn = s.status().get("stream_warning", "")
+    assert "424242" in warn and "DXLink slot" in warn
+    # Connected → never warns even if siblings exist.
+    s.store.connected = True
+    assert "stream_warning" not in s.status()
+
+
 def test_reset_kill_is_gated_and_re_enables_arming():
     s = _svc()
     assert s.reset_kill()["reset"] is False        # not killed → nothing to reset

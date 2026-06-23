@@ -164,7 +164,7 @@ class DeskService:
     # -- reads (the agent's eyes) ------------------------------------------
     def status(self) -> dict:
         running = bool(self._thread and self._thread.is_alive())
-        return {
+        st = {
             "live": is_live(),
             "stream_connected": self.store.connected,
             "stream_state": self.store.stream_state(),
@@ -175,6 +175,19 @@ class DeskService:
             "reconcile_note": self.reconcile_note,
             "risk": self.session_risk(),
         }
+        # Diagnostic: if the stream is down AND other winthorpe.mcp.server
+        # processes exist, a stale orphan is likely squatting the DXLink slot.
+        # Surface it (read-only) so the degraded state isn't a silent mystery.
+        if not self.store.connected:
+            from winthorpe.data.process_guard import find_sibling_servers
+            others = find_sibling_servers()
+            if others:
+                st["stream_warning"] = (
+                    f"stream down and {len(others)} other winthorpe.mcp.server "
+                    f"process(es) detected (pids {others}) — a stale orphan may be "
+                    f"squatting the DXLink slot. Kill it; the stream auto-retries."
+                )
+        return st
 
     def session_risk(self) -> dict:
         ok, why = self.risk.can_open()

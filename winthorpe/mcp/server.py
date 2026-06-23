@@ -246,6 +246,12 @@ def reset_kill_switch() -> dict:
 
 
 def main() -> None:
+    # Tie this server's lifetime to its parent (Claude Code): if the parent dies
+    # without cleaning us up, exit instead of leaking an orphan that squats the
+    # DXLink streamer slot (#6). Safe — affects only this process.
+    from winthorpe.data.process_guard import set_parent_death_signal
+    set_parent_death_signal()
+
     # Eager warm-up: instantiate the service (and its persistent stream) at
     # startup so the DXLink handshake is well underway before the first tool
     # call. Reads that bypass service() (get_gex, get_structural_levels) no
