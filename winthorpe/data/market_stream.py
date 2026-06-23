@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_SPOT_SYMBOLS = ("SPX", "SPY", "ES")
 STALE_AFTER_SEC = 10.0   # a value older than this is treated as absent
 WARMUP_GRACE_SEC = 8.0   # after start, "not yet connected" reads as warming, not dead
+RECONNECT_BACKOFF_SEC = 2.0       # first retry delay after a failed/dropped connect
+RECONNECT_BACKOFF_MAX_SEC = 30.0  # capped exponential backoff ceiling
 
 
 class MarketStore:
@@ -167,11 +169,36 @@ class MarketStream(threading.Thread):
 
     def run(self) -> None:
         import asyncio
-        try:
-            asyncio.run(self._main())
-        except Exception:
-            logger.exception("market stream crashed")
-            self.store.connected = False
+        self._run_with_retry(lambda: asyncio.run(self._main()))
+
+    def _run_with_retry(self, run_once) -> None:
+        """Connect, consume, and on ANY failure or clean drop RECONNECT with a
+        capped exponential backoff until stop() is called. Without this a lost or
+        refused DXLink connection (e.g. another process squatting the streamer
+        slot) would kill the thread permanently and the stream never self-heals.
+
+        ``run_once`` blocks for the lifetime of one connection (returns when the
+        connection ends; raises on a connect/transport error). Injected so the
+        backoff loop is unit-testable without a real DXLink session."""
+        backoff = RECONNECT_BACKOFF_SEC
+        while not self._stop.is_set():
+            started = time.monotonic()
+            try:
+                run_once()
+            except Exception:
+                logger.exception("market stream connection error")
+            finally:
+                self.store.connected = False
+            if self._stop.is_set():
+                break
+            # A connection that lived a long time then dropped → retry promptly;
+            # a fast failure (slot squatted, auth) → back off progressively.
+            if time.monotonic() - started >= RECONNECT_BACKOFF_MAX_SEC:
+                backoff = RECONNECT_BACKOFF_SEC
+            logger.warning("market stream down — reconnecting in %.0fs", backoff)
+            if self._stop.wait(backoff):   # interruptible sleep; True if stop set
+                break
+            backoff = min(backoff * 2, RECONNECT_BACKOFF_MAX_SEC)
 
     async def _main(self) -> None:
         import asyncio

@@ -2,7 +2,12 @@
 
 import time
 
-from winthorpe.data.market_stream import DEFAULT_SPOT_SYMBOLS, MarketStore, MarketStream
+from winthorpe.data.market_stream import (
+    DEFAULT_SPOT_SYMBOLS,
+    RECONNECT_BACKOFF_SEC,
+    MarketStore,
+    MarketStream,
+)
 from winthorpe.engine.market import StreamMarketView
 
 
@@ -89,6 +94,52 @@ def test_stream_state_distinguishes_warming_from_dead():
     # Connected but the only tick has aged out → stale again.
     s._spot["SPX"] = (7500.0, _t.monotonic() - 999.0)
     assert s.stream_state() == "stale"
+
+
+def test_stream_reconnects_with_exponential_backoff():
+    """A failed/dropped connection must RECONNECT (not kill the thread) with a
+    capped exponential backoff — the fix for an orphan squatting the DXLink slot."""
+    s = MarketStream(MarketStore())
+    s.store.connected = True
+    calls = {"n": 0}
+    waits = []
+
+    class FakeStop:
+        def __init__(self): self._set = False
+        def is_set(self): return self._set
+        def set(self): self._set = True
+        def wait(self, timeout):
+            waits.append(timeout)
+            if len(waits) >= 3:      # let it retry a few times, then stop
+                self._set = True
+            return self._set
+
+    s._stop = FakeStop()
+
+    def run_once():
+        calls["n"] += 1
+        raise RuntimeError("DXLink slot squatted")
+
+    s._run_with_retry(run_once)
+
+    assert calls["n"] == 3                              # retried, didn't die after one failure
+    assert waits == [RECONNECT_BACKOFF_SEC,            # capped exponential backoff
+                     RECONNECT_BACKOFF_SEC * 2,
+                     RECONNECT_BACKOFF_SEC * 4]
+    assert s.store.connected is False                  # marked down on failure
+
+
+def test_stream_retry_stops_cleanly_when_stop_requested():
+    """A clean connection end because stop() was called must NOT reconnect."""
+    s = MarketStream(MarketStore())
+    calls = {"n": 0}
+
+    def run_once():
+        calls["n"] += 1
+        s._stop.set()           # connection ends because shutdown was requested
+
+    s._run_with_retry(run_once)
+    assert calls["n"] == 1      # no reconnect after a requested stop
 
 
 class _FakeFallback:
