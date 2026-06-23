@@ -132,3 +132,15 @@ class SessionRisk:
         self.kill_reason = reason
         self._save()
         logger.error("KILL SWITCH ENGAGED: %s", reason)
+
+    def clear_kill(self) -> bool:
+        """Clear the kill-switch latch (operator reconciled). Returns True if a
+        latch was actually cleared. Does NOT clear the daily-loss halt — that is a
+        real risk limit, kept separate and self-resetting on the next session."""
+        if not self.killed:
+            return False
+        self.killed = False
+        self.kill_reason = ""
+        self._save()
+        logger.warning("kill switch CLEARED (operator reset)")
+        return True

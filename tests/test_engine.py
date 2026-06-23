@@ -272,6 +272,44 @@ def test_run_plan_arms_enters_and_exits_on_invalidation():
     assert eng.risk.closed_trades == 1
 
 
+def test_flatten_closes_open_position_without_latching():
+    """Graceful flatten of a live position: closes via the normal path, books
+    P&L, and does NOT latch the session (vs the kill switch)."""
+    m = FakeMarket(spot=7530.0, mark=8.0)
+    b = FakeBroker()
+    eng = _engine(m, b)
+    plan = _plan()
+
+    def fake_sleep(_):
+        eng.flatten_requested = True       # operator requests a graceful exit
+
+    with patch("winthorpe.engine.engine.resolve_spxw_option", return_value=_FAKE_RESOLVE):
+        eng.run_plan(plan, poll_interval=0, sleep_fn=fake_sleep)
+
+    assert plan.status.value == "closed"
+    assert eng.risk.closed_trades == 1
+    assert eng.risk.killed is False            # NON-latching
+    assert eng.risk.is_halted() is False
+    assert b.held is False                     # market-closed
+
+
+def test_flatten_cancels_armed_plan_before_entry():
+    m = FakeMarket(spot=7000.0, mark=8.0)      # far from the 7530 trigger → never fires
+    b = FakeBroker()
+    eng = _engine(m, b)
+    plan = _plan()
+
+    def fake_sleep(_):
+        eng.flatten_requested = True
+
+    with patch("winthorpe.engine.engine.resolve_spxw_option", return_value=_FAKE_RESOLVE):
+        eng.run_plan(plan, poll_interval=0, sleep_fn=fake_sleep)
+
+    assert plan.status.value == "cancelled"
+    assert len(b.orders) == 0                  # never entered
+    assert eng.risk.killed is False
+
+
 def test_run_plan_expires_if_trigger_never_hits():
     m = FakeMarket(spot=7000.0, mark=8.0, now="15:50")   # far from level, past window
     b = FakeBroker()

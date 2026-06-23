@@ -72,6 +72,21 @@ def test_full_run_through_service():
     assert s.position_state() is None          # flat again
 
 
+def test_reset_kill_is_gated_and_re_enables_arming():
+    s = _svc()
+    assert s.reset_kill()["reset"] is False        # not killed → nothing to reset
+    s.risk.engage_kill("validation cleanup")
+    assert s.session_risk()["can_open"] is False
+    r = s.reset_kill()
+    assert r["reset"] is True
+    assert s.session_risk()["can_open"] is True     # armable again, no reconnect
+
+
+def test_flatten_when_nothing_running_is_a_noop():
+    s = _svc()
+    assert s.flatten_position("x")["flattened"] is False
+
+
 def test_kill_switch_blocks_subsequent_submit():
     s = _svc()
     s.engage_kill("broker glitch")

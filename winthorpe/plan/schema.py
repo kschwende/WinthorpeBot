@@ -54,6 +54,7 @@ class PlanStatus(str, Enum):
     CLOSED = "closed"        # flat — terminal
     REJECTED = "rejected"    # infeasible / vetoed — terminal
     EXPIRED = "expired"      # trigger never hit before valid_until — terminal
+    CANCELLED = "cancelled"  # flattened/cancelled before entry by operator — terminal
 
 
 @dataclass

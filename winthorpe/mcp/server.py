@@ -220,9 +220,29 @@ def sign_and_arm_plan(plan: dict) -> dict:
 @mcp.tool
 def engage_kill_switch(reason: str) -> dict:
     """MECHANICAL emergency stop only (broker glitch, unfillable leg, cascade).
-    Halts new entries; the engine flattens any open position. Not a 'this trade
-    hurts' button — market-based bail is the plan's invalidation rule."""
+    Halts new entries AND latches the session dark; the engine flattens any open
+    position. Not a 'this trade hurts' button — for a routine graceful exit use
+    flatten_position; market-based bail is the plan's invalidation rule."""
     return service().engage_kill(reason)
+
+
+@mcp.tool
+def flatten_position(reason: str) -> dict:
+    """Gracefully close the open position (or cancel an armed-but-unfilled plan)
+    WITHOUT latching the session — the 'I want out of this trade now' that is NOT
+    an emergency stop. The engine cancels working orders + market-closes on its
+    next tick; poll get_status until plan_running is false. Contrast
+    engage_kill_switch, which also halts the session dark."""
+    return service().flatten_position(reason)
+
+
+@mcp.tool
+def reset_kill_switch() -> dict:
+    """Clear a kill-switch latch after the operator has reconciled (requires the
+    desk to be flat — no plan running, no open position). Re-enables arming new
+    plans WITHOUT restarting the desk. Does NOT clear the daily-loss halt, which
+    is a separate real risk limit that self-resets next session."""
+    return service().reset_kill()
 
 
 def main() -> None:

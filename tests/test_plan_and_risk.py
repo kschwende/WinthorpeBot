@@ -56,6 +56,25 @@ def test_plan_rejects_empty_thesis():
     assert any("thesis" in e for e in _good_plan(thesis="  ").validate())
 
 
+def test_clear_kill_resets_latch():
+    r = SessionRisk()
+    r.engage_kill("validation cleanup")
+    assert r.killed and not r.can_open()[0]
+    assert r.clear_kill() is True
+    assert not r.killed and r.can_open()[0]   # arming re-enabled, no restart needed
+    assert r.clear_kill() is False            # idempotent: nothing left to clear
+
+
+def test_clear_kill_does_not_touch_daily_halt():
+    r = SessionRisk()
+    r.record_close(-abs(r.max_daily_loss))    # trip the daily-loss halt
+    r.engage_kill("also killed")
+    r.clear_kill()
+    assert r.killed is False
+    assert r.is_halted() is True              # the real risk limit stands
+    assert not r.can_open()[0]
+
+
 def test_trailing_stop_validation():
     # Both-or-neither.
     assert any("set together" in e for e in _good_plan(trail_pct=0.25).validate())

@@ -134,6 +134,33 @@ class DeskService:
         self.risk.engage_kill(reason)
         return {"killed": True, "reason": reason}
 
+    def flatten_position(self, reason: str) -> dict:
+        """Graceful, NON-latching close — close an open position or cancel an
+        armed-but-unfilled plan, without engaging the kill latch. The engine acts
+        on its next tick (~1s); poll get_status until flat."""
+        if not (self._thread and self._thread.is_alive()):
+            return {"flattened": False, "reason": "no plan running (nothing to flatten)"}
+        self.engine.flatten_requested = True
+        had_position = self.engine.open_state is not None
+        return {"flattened": True,
+                "action": "closing open position" if had_position else "cancelling armed plan",
+                "note": f"flatten requested ({reason}); engine acts on its next tick — "
+                        f"poll get_status until plan_running is false"}
+
+    def reset_kill(self) -> dict:
+        """Clear a kill-switch latch after reconciling (requires flat). Lets new
+        plans arm again without restarting the desk. Does NOT clear the daily-loss
+        halt (a separate, real risk limit)."""
+        if self._thread and self._thread.is_alive():
+            return {"reset": False, "reason": "a plan is still running — flatten first"}
+        if self.engine.open_state is not None or self.risk.open_position:
+            return {"reset": False, "reason": "a position is open — flatten/reconcile before resetting"}
+        if not self.risk.clear_kill():
+            return {"reset": False, "reason": "kill switch is not engaged"}
+        return {"reset": True,
+                "note": "kill switch cleared; new plans can be armed. "
+                        "(Daily-loss halt, if any, is unaffected.)"}
+
     # -- reads (the agent's eyes) ------------------------------------------
     def status(self) -> dict:
         running = bool(self._thread and self._thread.is_alive())

@@ -79,6 +79,7 @@ class Engine:
         self.risk = risk
         self.journal = journal
         self.open_state: Optional[OpenState] = None  # live position (None when flat)
+        self.flatten_requested: bool = False  # graceful non-latching close/cancel
 
     # -- live orchestration ------------------------------------------------
     def run_plan(self, plan: TradePlan, poll_interval: float = 1.0,
@@ -99,6 +100,13 @@ class Engine:
         while True:
             if self.risk.killed:
                 self.journal.event(plan.plan_id, "kill_before_entry", reason=self.risk.kill_reason)
+                return
+            if self.flatten_requested:
+                # Operator cancelled the armed plan before it filled — graceful,
+                # non-latching (vs the kill switch). No position to close.
+                self.flatten_requested = False
+                plan.status = PlanStatus.CANCELLED
+                self.journal.event(plan.plan_id, "cancelled_before_entry")
                 return
             if plan.valid_until_et and self.market.now_et().strftime("%H:%M") >= plan.valid_until_et:
                 plan.status = PlanStatus.EXPIRED
@@ -135,6 +143,13 @@ class Engine:
         while True:
             if self.risk.killed:
                 self.close(plan, st, "kill_switch")
+                return
+            if self.flatten_requested:
+                # Graceful operator close — flatten the position WITHOUT latching
+                # the session (vs the kill switch). Normal close path: cancel
+                # working orders + market-close, record P&L, no halt.
+                self.flatten_requested = False
+                self.close(plan, st, "manual_flatten")
                 return
             reason = self.manage_step(plan, st)
             if reason:
