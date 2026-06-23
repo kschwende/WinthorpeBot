@@ -47,7 +47,8 @@ def propose_plan(
     confluence_tol: float = 5.0,  # pts: structural level "near" the wall
     entry_offset: float = 5.0,    # enter this many pts inside the wall
     wall_buffer: float = 5.0,     # invalidation this many pts beyond the wall
-    tp_pct: float = 0.30,
+    tp_pct: float = 0.20,         # 0DTE bounce scalps pay quick & small (~+15-20%);
+                                  # large/2x TPs are fantasy — theta eats the hold.
     sl_pct: float = -0.25,
     time_stop_et: str = "15:45",
     valid_until_et: str = "15:30",
