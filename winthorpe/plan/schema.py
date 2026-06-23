@@ -92,6 +92,14 @@ class TradePlan:
     tp_pct: float = 0.0                  # +0.30 = take profit at fill × 1.30
     sl_pct: float = 0.0                  # -0.25 = stop at fill × 0.75 (negative)
 
+    # --- exits: optional trailing stop (engine-monitored on the option mark) ---
+    # Lets a winner run instead of capping at the fixed tp_pct. Both-or-neither;
+    # absent = today's fixed-OCO behavior. The sl_pct OCO stays as the mechanical
+    # floor; tp_pct stays as a hard ceiling. The trail exits BELOW that ceiling on
+    # a pullback off the high-water mark.
+    trail_activate_pct: Optional[float] = None  # arm once up this much (+0.20)
+    trail_pct: Optional[float] = None           # exit on this pullback off the high (0.25)
+
     # --- exits: engine-monitored underlying invalidation (the agreed bail rule) ---
     invalidation: Optional[Condition] = None
 
@@ -131,6 +139,12 @@ class TradePlan:
             errs.append("tp_pct must be > 0")
         if not (-1.0 < self.sl_pct < 0):
             errs.append("sl_pct must be negative and > -1.0 (a fractional loss)")
+        if (self.trail_pct is None) != (self.trail_activate_pct is None):
+            errs.append("trail_pct and trail_activate_pct must be set together (or both omitted)")
+        if self.trail_pct is not None and not (0 < self.trail_pct < 1):
+            errs.append("trail_pct must be a fraction in (0, 1)")
+        if self.trail_activate_pct is not None and self.trail_activate_pct < 0:
+            errs.append("trail_activate_pct must be >= 0")
         if not self.time_stop_et:
             errs.append("time_stop_et is REQUIRED for 0DTE (no global EOD backstop)")
         if self.min_contracts < 1 or self.max_contracts < self.min_contracts:

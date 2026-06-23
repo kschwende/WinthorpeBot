@@ -56,6 +56,23 @@ def test_plan_rejects_empty_thesis():
     assert any("thesis" in e for e in _good_plan(thesis="  ").validate())
 
 
+def test_trailing_stop_validation():
+    # Both-or-neither.
+    assert any("set together" in e for e in _good_plan(trail_pct=0.25).validate())
+    assert any("set together" in e for e in _good_plan(trail_activate_pct=0.2).validate())
+    # Range checks.
+    assert any("trail_pct" in e for e in
+               _good_plan(trail_pct=1.5, trail_activate_pct=0.2).validate())
+    assert any("trail_activate_pct" in e for e in
+               _good_plan(trail_pct=0.25, trail_activate_pct=-0.1).validate())
+    # A well-formed trail is clean and signs.
+    p = _good_plan(trail_pct=0.25, trail_activate_pct=0.20)
+    assert p.validate() == []
+    p.sign()
+    # Default plans have no trail (backward compatible).
+    assert _good_plan().trail_pct is None
+
+
 def test_plan_limit_entry_needs_price():
     assert any("entry_limit" in e for e in
                _good_plan(entry_type="OPTION_LIMIT").validate())

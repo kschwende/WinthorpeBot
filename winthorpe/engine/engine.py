@@ -62,6 +62,13 @@ class OpenState:
     contracts: int
     entry_premium: float
     oco_id: Optional[str]
+    high_water: float = 0.0       # peak option mark seen while open (for the trail)
+    trail_armed: bool = False     # the trail has crossed its activation threshold
+
+    def __post_init__(self):
+        # Seed the high-water mark at the fill so the trail has a sane floor.
+        if self.high_water <= 0:
+            self.high_water = self.entry_premium
 
 
 class Engine:
@@ -220,7 +227,7 @@ class Engine:
         self.risk.set_live_position({
             "open_state": {"occ_symbol": occ, "streamer_symbol": streamer,
                            "contracts": sizing.contracts, "entry_premium": fill,
-                           "oco_id": oco_id},
+                           "oco_id": oco_id, "high_water": fill},
             "plan": plan.to_dict(),
         })
         return self.open_state
@@ -239,7 +246,30 @@ class Engine:
         now = self.market.now_et().strftime("%H:%M")
         if plan.time_stop_et and now >= plan.time_stop_et:
             return "time_stop"
-        # 3. OCO filled out-of-band → broker no longer shows the position.
+        # 3. Trailing stop — engine-monitored ratchet on the option mark. Lets a
+        #    winner run: arm once up trail_activate_pct, then exit on a pullback of
+        #    trail_pct off the high-water mark. The sl_pct OCO stays the mechanical
+        #    floor; this only adds an earlier, dynamic upside exit.
+        if plan.trail_pct is not None:
+            mark = self.market.option_mark(st.streamer_symbol)
+            if mark is not None and mark > 0:
+                if mark > st.high_water:
+                    st.high_water = mark
+                activate_at = st.entry_premium * (1 + (plan.trail_activate_pct or 0.0))
+                if st.high_water >= activate_at:
+                    if not st.trail_armed:
+                        st.trail_armed = True
+                        self.journal.event(plan.plan_id, "trail_armed",
+                                           high_water=round(st.high_water, 2),
+                                           activate_at=round(activate_at, 2))
+                    trail_stop = st.high_water * (1 - plan.trail_pct)
+                    if mark <= trail_stop:
+                        self.journal.event(plan.plan_id, "trail_hit",
+                                           mark=round(mark, 2),
+                                           high_water=round(st.high_water, 2),
+                                           trail_stop=round(trail_stop, 2))
+                        return "trail_stop"
+        # 4. OCO filled out-of-band → broker no longer shows the position.
         positions = self.broker.get_positions()
         held = any(str(p.get("symbol", "")).strip() == st.occ_symbol
                    and int(p.get("quantity", 0)) != 0 for p in positions)

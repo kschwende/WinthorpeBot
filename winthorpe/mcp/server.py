@@ -173,10 +173,16 @@ def validate_plan(plan: dict) -> dict:
 @mcp.tool
 async def propose_plan(thesis: str, side: str, proposed_level: float,
                        expiry: str, tp_pct: float = 0.30, sl_pct: float = -0.25,
+                       trail_activate_pct: float | None = None,
+                       trail_pct: float | None = None,
                        time_stop_et: str = "15:45", product: str = "SPX") -> dict:
     """Correct a thesis against live GEX and return a DRAFT plan + the
     corrections (e.g. 'you said 7530, the call wall is 7500'). Does NOT arm —
-    review/edit the draft, then call sign_and_arm_plan."""
+    review/edit the draft, then call sign_and_arm_plan.
+
+    To let a winner run instead of capping at tp_pct, set BOTH trail_activate_pct
+    (arm once up e.g. +0.20) and trail_pct (exit on e.g. 0.25 pullback off the
+    high). tp_pct then acts as a hard ceiling above the trail."""
     gex = await compute_gex(product=product)
     # Structural levels for confluence (best-effort — never block the proposal).
     levels = None
@@ -188,6 +194,7 @@ async def propose_plan(thesis: str, side: str, proposed_level: float,
     proposal = _propose(
         thesis=thesis, side=Side(side.upper()), proposed_level=proposed_level,
         gex=gex, expiry=expiry, levels=levels, tp_pct=tp_pct, sl_pct=sl_pct,
+        trail_activate_pct=trail_activate_pct, trail_pct=trail_pct,
         time_stop_et=time_stop_et,
     )
     return {"draft_plan": proposal.plan.to_dict(), "corrections": proposal.corrections,

@@ -56,7 +56,7 @@ class DeskService:
         osd = lp.get("open_state", {})
         st = OpenState(osd.get("occ_symbol", ""), osd.get("streamer_symbol", ""),
                        int(osd.get("contracts", 0)), float(osd.get("entry_premium", 0)),
-                       osd.get("oco_id"))
+                       osd.get("oco_id"), float(osd.get("high_water", 0) or 0))
         try:
             plan = TradePlan(**lp["plan"])
         except Exception as exc:
@@ -177,6 +177,14 @@ class DeskService:
         inv = self._plan.invalidation
         dist_to_inv = (round(abs(spot - inv.level), 2)
                        if (inv and spot is not None) else None)
+        trail = None
+        if self._plan.trail_pct is not None:
+            trail = {
+                "high_water": round(st.high_water, 2),
+                "armed": st.trail_armed,
+                "trail_stop": round(st.high_water * (1 - self._plan.trail_pct), 2),
+                "activate_at": round(st.entry_premium * (1 + (self._plan.trail_activate_pct or 0.0)), 2),
+            }
         return {
             "plan_id": self._plan.plan_id,
             "occ_symbol": st.occ_symbol,
@@ -187,6 +195,7 @@ class DeskService:
             "spot": spot,
             "distance_to_invalidation": dist_to_inv,
             "time_stop_et": self._plan.time_stop_et,
+            "trail": trail,
             "oco_id": st.oco_id,
             "status": self._plan.status.value,
         }

@@ -144,6 +144,56 @@ def test_oco_filled_detected_when_position_gone():
     assert eng.manage_step(plan, st) == "oco_filled"
 
 
+def test_trailing_stop_rides_then_exits_on_pullback():
+    """Trail arms after +20%, ratchets the high-water up, and exits on a 25%
+    pullback — letting the winner run far past the fixed tp_pct ceiling."""
+    m = FakeMarket(spot=7530.0, mark=11.0)        # enter at $11
+    b = FakeBroker()
+    eng = _engine(m, b)
+    plan = _plan(tp_pct=2.0, trail_activate_pct=0.20, trail_pct=0.25)
+    with patch("winthorpe.engine.engine.resolve_spxw_option", return_value=_FAKE_RESOLVE):
+        st = eng.enter(plan)
+    assert st.high_water == 11.0 and st.trail_armed is False
+
+    # Still below activation ($13.20) → no trail, not armed.
+    m._mark = 13.0
+    assert eng.manage_step(plan, st) is None
+    assert st.trail_armed is False
+
+    # Crosses activation and runs to $18.80 → armed, high-water ratchets up.
+    m._mark = 18.8
+    assert eng.manage_step(plan, st) is None
+    assert st.trail_armed is True
+    assert st.high_water == 18.8
+
+    # Mild dip holds (trail stop = 18.8 * 0.75 = $14.10) → still in.
+    m._mark = 15.0
+    assert eng.manage_step(plan, st) is None
+    assert st.high_water == 18.8                   # high-water does not fall
+
+    # Pullback through the trail stop → exit.
+    m._mark = 14.0
+    assert eng.manage_step(plan, st) == "trail_stop"
+
+    pnl = eng.close(plan, st, "trail_stop")
+    assert pnl == round((14.0 - 11.0) * 100 * st.contracts, 2)   # captured the run
+    assert "oco-1" in b.cancels                                   # ceiling OCO cancelled
+
+
+def test_no_trail_by_default_is_backward_compatible():
+    m = FakeMarket(spot=7530.0, mark=8.0)
+    b = FakeBroker()
+    eng = _engine(m, b)
+    plan = _plan()                                # no trail fields
+    with patch("winthorpe.engine.engine.resolve_spxw_option", return_value=_FAKE_RESOLVE):
+        st = eng.enter(plan)
+    # A big run then a deep pullback must NOT trigger any trail exit.
+    m._mark = 40.0
+    assert eng.manage_step(plan, st) is None
+    m._mark = 1.0
+    assert eng.manage_step(plan, st) is None       # only OCO/invalidation/time govern
+
+
 def test_infeasible_plan_rejected_at_entry():
     # $12 mark, sl_pct -0.25 → stop $9, risk $300/ctr. Budget 1000 → can't afford 5.
     m = FakeMarket(spot=7530.0, mark=12.0)

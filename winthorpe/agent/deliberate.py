@@ -49,6 +49,8 @@ def propose_plan(
     wall_buffer: float = 5.0,     # invalidation this many pts beyond the wall
     tp_pct: float = 0.30,
     sl_pct: float = -0.25,
+    trail_activate_pct=None,      # arm a trailing stop once up this much (+0.20)
+    trail_pct=None,               # exit on this pullback off the high-water mark (0.25)
     time_stop_et: str = "15:45",
     valid_until_et: str = "15:30",
 ) -> Proposal:
@@ -105,7 +107,9 @@ def propose_plan(
 
     plan = TradePlan(
         thesis=thesis, side=side, trigger=trigger, strike=strike, expiry=expiry,
-        tp_pct=tp_pct, sl_pct=sl_pct, invalidation=invalidation,
+        tp_pct=tp_pct, sl_pct=sl_pct,
+        trail_activate_pct=trail_activate_pct, trail_pct=trail_pct,
+        invalidation=invalidation,
         time_stop_et=time_stop_et, valid_until_et=valid_until_et,
         notes=" ".join(corrections),
     )
