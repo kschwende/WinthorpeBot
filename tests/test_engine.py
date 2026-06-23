@@ -191,6 +191,36 @@ def test_trailing_stop_rides_then_exits_on_pullback():
     assert b.held is False          # market-closed
 
 
+def test_trail_high_water_persisted_on_ratchet():
+    """A mid-trade restart must recover the ratcheted high-water, not entry — so
+    the persisted live_position tracks high_water (and armed) once the trail arms."""
+    m = FakeMarket(spot=7530.0, mark=11.0)
+    b = FakeBroker()
+    eng = _engine(m, b)
+    plan = _plan(tp_pct=2.0, trail_activate_pct=0.20, trail_pct=0.25)
+    with patch("winthorpe.engine.engine.resolve_spxw_option", return_value=_FAKE_RESOLVE):
+        st = eng.enter(plan)
+    # At entry: persisted high_water == fill, not armed.
+    assert eng.risk.live_position["open_state"]["high_water"] == 11.0
+    assert eng.risk.live_position["open_state"]["trail_armed"] is False
+
+    # Cross activation ($13.20) → armed + high-water persisted.
+    m._mark = 14.0
+    eng.manage_step(plan, st)
+    lp = eng.risk.live_position["open_state"]
+    assert lp["trail_armed"] is True and lp["high_water"] == 14.0
+
+    # New high while armed → persisted ratchet.
+    m._mark = 18.8
+    eng.manage_step(plan, st)
+    assert eng.risk.live_position["open_state"]["high_water"] == 18.8
+
+    # Pullback (no new high) → persisted high-water stays at the peak.
+    m._mark = 15.0
+    eng.manage_step(plan, st)
+    assert eng.risk.live_position["open_state"]["high_water"] == 18.8
+
+
 def test_no_trail_by_default_is_backward_compatible():
     m = FakeMarket(spot=7530.0, mark=8.0)
     b = FakeBroker()

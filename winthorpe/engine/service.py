@@ -56,7 +56,8 @@ class DeskService:
         osd = lp.get("open_state", {})
         st = OpenState(osd.get("occ_symbol", ""), osd.get("streamer_symbol", ""),
                        int(osd.get("contracts", 0)), float(osd.get("entry_premium", 0)),
-                       osd.get("oco_id"), float(osd.get("high_water", 0) or 0))
+                       osd.get("oco_id"), float(osd.get("high_water", 0) or 0),
+                       bool(osd.get("trail_armed", False)))
         try:
             plan = TradePlan(**lp["plan"])
         except Exception as exc:

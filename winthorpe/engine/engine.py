@@ -238,13 +238,21 @@ class Engine:
 
         self.open_state = OpenState(occ, streamer, sizing.contracts, fill, oco_id)
         # Persist enough to recover this live trade if the process restarts.
+        self._persist_open_state(plan, self.open_state)
+        return self.open_state
+
+    def _persist_open_state(self, plan: TradePlan, st: OpenState) -> None:
+        """Persist the live position so a restart recovers it — including the
+        CURRENT trail high-water and armed flag (not just the entry value), so a
+        mid-trade restart doesn't reset an armed trail's ratchet to entry."""
         self.risk.set_live_position({
-            "open_state": {"occ_symbol": occ, "streamer_symbol": streamer,
-                           "contracts": sizing.contracts, "entry_premium": fill,
-                           "oco_id": oco_id, "high_water": fill},
+            "open_state": {"occ_symbol": st.occ_symbol,
+                           "streamer_symbol": st.streamer_symbol,
+                           "contracts": st.contracts, "entry_premium": st.entry_premium,
+                           "oco_id": st.oco_id, "high_water": st.high_water,
+                           "trail_armed": st.trail_armed},
             "plan": plan.to_dict(),
         })
-        return self.open_state
 
     # -- management --------------------------------------------------------
     def manage_step(self, plan: TradePlan, st: OpenState) -> Optional[str]:
@@ -267,15 +275,22 @@ class Engine:
         if plan.trail_pct is not None:
             mark = self.market.option_mark(st.streamer_symbol)
             if mark is not None and mark > 0:
-                if mark > st.high_water:
+                new_high = mark > st.high_water
+                if new_high:
                     st.high_water = mark
                 activate_at = st.entry_premium * (1 + (plan.trail_activate_pct or 0.0))
                 if st.high_water >= activate_at:
                     if not st.trail_armed:
                         st.trail_armed = True
+                        # Persist the armed flag + high-water so a restart recovers
+                        # the live ratchet, not the entry value (#3).
+                        self._persist_open_state(plan, st)
                         self.journal.event(plan.plan_id, "trail_armed",
                                            high_water=round(st.high_water, 2),
                                            activate_at=round(activate_at, 2))
+                    elif new_high:
+                        # Ratchet moved while armed — re-persist the new high-water.
+                        self._persist_open_state(plan, st)
                     trail_stop = st.high_water * (1 - plan.trail_pct)
                     if mark <= trail_stop:
                         self.journal.event(plan.plan_id, "trail_hit",
