@@ -92,6 +92,31 @@ def _vwap(bars: list) -> Optional[float]:
     return (num / den) if den > 0 else None
 
 
+def basis_from_matched_bars(
+    spx_bars: list, es_bars: list, *, max_skew_s: float = 120.0
+) -> Optional[float]:
+    """True SPX−ES basis from a same-timestamp bar pair at the latest minute the
+    cash index actually traded.
+
+    The cash index trades RTH only, so outside RTH the live SPX mark is frozen at
+    the prior close. Pairing that stale mark with a *live* ES bar folds the whole
+    overnight move into the "basis" — and since fair value is ``ES + basis``, that
+    just regurgitates PDC (a flat open) no matter how far ES has travelled. Pairing
+    SPX and ES at the same wall-clock minute instead isolates the real
+    financing/dividend spread, which is stable overnight.
+
+    Returns None if either side is empty or no ES bar lands within ``max_skew_s``
+    of the latest SPX bar — caller falls back to the live-mark estimate.
+    """
+    if not spx_bars or not es_bars:
+        return None
+    last_spx = max(spx_bars, key=lambda c: c.ts)
+    es_match = min(es_bars, key=lambda c: abs((c.ts - last_spx.ts).total_seconds()))
+    if abs((es_match.ts - last_spx.ts).total_seconds()) > max_skew_s:
+        return None
+    return float(last_spx.close) - float(es_match.close)
+
+
 def levels_from_bars(
     *,
     spx_bars: list,
@@ -189,12 +214,17 @@ def fetch_structural_levels(now_et: Optional[datetime] = None) -> StructuralLeve
     spy_bars = asyncio.run(_pull("SPY"))    # has volume → VWAP source
 
     prev_close = _spx_prev_close()          # dedicated field, not the live mark
-    # Basis = SPX spot − latest ES bar close (uses bars already pulled; the
-    # futures market-data symbol is finicky, the bar close is reliable).
+    # Basis = SPX−ES at the latest minute SPX cash actually traded (matched bar
+    # pair). NOT live_SPX_mark − live_ES: the cash index is frozen at its prior
+    # close outside RTH, so that estimate folds the overnight move into the basis
+    # and fair value (ES + basis) just spits back PDC. Fall back to the live-mark
+    # estimate only if no matched pair is available (e.g. SPX bars missing).
     spx_spot = market_data_mark("SPX", "indices")
     spy_spot = market_data_mark("SPY", "equities")
-    last_es = max(es_bars, key=lambda c: c.ts).close if es_bars else None
-    basis = (spx_spot - last_es) if (spx_spot and last_es) else 0.0
+    basis = basis_from_matched_bars(spx_bars, es_bars)
+    if basis is None:
+        last_es = max(es_bars, key=lambda c: c.ts).close if es_bars else None
+        basis = (spx_spot - last_es) if (spx_spot and last_es) else 0.0
     spy_to_spx = (spx_spot / spy_spot) if (spx_spot and spy_spot) else 10.0
 
     return levels_from_bars(spx_bars=spx_bars, es_bars=es_bars,

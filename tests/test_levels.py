@@ -4,7 +4,11 @@ from collections import namedtuple
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from winthorpe.levels.structural import StructuralLevels, levels_from_bars
+from winthorpe.levels.structural import (
+    StructuralLevels,
+    basis_from_matched_bars,
+    levels_from_bars,
+)
 
 ET = ZoneInfo("America/New_York")
 Candle = namedtuple("Candle", ["symbol", "ts", "open", "high", "low", "close", "volume"])
@@ -13,6 +17,11 @@ Candle = namedtuple("Candle", ["symbol", "ts", "open", "high", "low", "close", "
 def _c(sym, y, mo, d, h, mi, hi, lo, vol=0):
     ts = datetime(y, mo, d, h, mi, tzinfo=ET)
     return Candle(sym, ts, (hi + lo) / 2, hi, lo, (hi + lo) / 2, vol)
+
+
+def _c2(sym, ts, close, vol=0):
+    """Candle at an explicit ts with an explicit close (flat H/L/O)."""
+    return Candle(sym, ts, close, close, close, close, vol)
 
 
 def test_prior_day_and_overnight_and_opening_range():
@@ -84,6 +93,34 @@ def test_vwap_ignores_zero_volume_and_participates_in_confluence():
     hits = {h["name"] for h in lv.confluence(7503.0, tolerance=5.0)}
     assert "VWAP" in hits            # 7505 within 5pt of 7503
     assert "WVWAP" not in hits       # 7490 is 13pt away
+
+
+def test_basis_from_matched_bars_uses_same_minute_pair():
+    # Yesterday's RTH close: SPX cash 7472.79 vs ES 7545.50 at the same 16:00
+    # minute → true basis −72.71 (ES at a premium). Overnight ES has since slid
+    # to 7432, but the matched-bar basis must NOT absorb that move.
+    spx = [
+        _c2("SPX", datetime(2026, 6, 22, 15, 59, tzinfo=ET), 7472.79),
+        _c2("SPX", datetime(2026, 6, 22, 16, 0, tzinfo=ET), 7472.79),
+    ]
+    es = [
+        _c2("ES", datetime(2026, 6, 22, 16, 0, tzinfo=ET), 7545.50),
+        _c2("ES", datetime(2026, 6, 23, 8, 57, tzinfo=ET), 7432.00),  # live, ignored
+    ]
+    basis = basis_from_matched_bars(spx, es)
+    assert basis is not None
+    assert round(basis, 2) == -72.71
+    # Fair-value open from current ES recovers the real ~1.5% gap-down, not PDC.
+    assert round(7432.00 + basis, 2) == 7359.29
+
+
+def test_basis_returns_none_without_a_close_pair():
+    # SPX bar 14:00, nearest ES bar 03:00 next day → skew far beyond tolerance.
+    spx = [_c2("SPX", datetime(2026, 6, 22, 14, 0, tzinfo=ET), 7472.0)]
+    es = [_c2("ES", datetime(2026, 6, 23, 3, 0, tzinfo=ET), 7432.0)]
+    assert basis_from_matched_bars(spx, es) is None
+    assert basis_from_matched_bars([], es) is None
+    assert basis_from_matched_bars(spx, []) is None
 
 
 def test_empty_bars_yield_nulls_but_keeps_pdc():
