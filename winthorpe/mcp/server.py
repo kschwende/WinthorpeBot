@@ -81,6 +81,17 @@ def get_position_state() -> dict | None:
 
 
 @mcp.tool
+def get_volume_profile(session: str = "prior") -> dict:
+    """Volume-at-price profile — POC / value-area-high (VAH) / value-area-low (VAL)
+    for a RTH session, from 1m ES bars (the traded instrument; SPX cash has no
+    volume). Returns ES-native levels AND SPX-converted (via basis). The POC is the
+    reversion magnet; VAL/VAH are the value-area edges a setup keys off.
+    session: 'prior' (last completed RTH day) or 'today' (developing)."""
+    from winthorpe.levels.volume_profile import fetch_volume_profile
+    return fetch_volume_profile(session)
+
+
+@mcp.tool
 def get_structural_levels() -> dict:
     """Prior-day/overnight price structure: PDH/PDL/PDC, ONH/ONL (ES basis-adj),
     opening range, session/weekly VWAP, today's RTH extremes. The anchors to

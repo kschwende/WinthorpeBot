@@ -105,16 +105,19 @@ def basis_from_matched_bars(
     SPX and ES at the same wall-clock minute instead isolates the real
     financing/dividend spread, which is stable overnight.
 
-    Returns None if either side is empty or no ES bar lands within ``max_skew_s``
-    of the latest SPX bar — caller falls back to the live-mark estimate.
+    Walks back from the latest SPX bar to the first one that HAS a contemporaneous
+    ES bar (within ``max_skew_s``). The walk-back matters: the cash feed can emit
+    stale after-hours SPX prints (the close repeated at e.g. 17:33) that have no ES
+    bar near them (ES has a 17:00–18:00 gap) — trying only the single latest SPX bar
+    then yields no match and a null basis. Returns None only if NO SPX bar pairs.
     """
     if not spx_bars or not es_bars:
         return None
-    last_spx = max(spx_bars, key=lambda c: c.ts)
-    es_match = min(es_bars, key=lambda c: abs((c.ts - last_spx.ts).total_seconds()))
-    if abs((es_match.ts - last_spx.ts).total_seconds()) > max_skew_s:
-        return None
-    return float(last_spx.close) - float(es_match.close)
+    for spx in sorted(spx_bars, key=lambda c: c.ts, reverse=True):
+        es_match = min(es_bars, key=lambda c: abs((c.ts - spx.ts).total_seconds()))
+        if abs((es_match.ts - spx.ts).total_seconds()) <= max_skew_s:
+            return float(spx.close) - float(es_match.close)
+    return None
 
 
 def levels_from_bars(
