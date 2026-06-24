@@ -25,6 +25,70 @@ an **execution-and-risk-discipline harness, not a signal service or black box** 
 secret alpha hidden inside. The edge is *your* read of the market; the bot's only job is to
 execute it without flinching and refuse to let you blow up.
 
+> **Disclaimer.** This is an execution-and-risk-discipline harness for your *own*
+> discretionary trading — not financial advice, not a signal service, and not a
+> source of alpha. 0DTE options can lose money fast. Run it in **DRY-RUN** until you
+> understand exactly what it does, and trade live entirely at your own risk.
+
+## Install & run
+
+Requires **Python ≥ 3.11** and a free [tastytrade](https://tastytrade.com) account.
+No paid data subscription — it runs on tastytrade's free real-time DXLink feed.
+
+```bash
+# 1. Clone
+git clone https://github.com/kschwende/WinthorpeBot.git
+cd WinthorpeBot
+
+# 2. Virtualenv + install (the venv needs tastytrade + fastmcp)
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"      # omit [dev] to skip the test tooling
+
+# 3. Credentials (DRY-RUN runs without them; live trading needs them)
+cp .env.example .env                   # then fill in TT_SECRET / TT_REFRESH
+```
+
+`.env` is auto-loaded. Get `TT_SECRET` / `TT_REFRESH` (OAuth) from the
+[tastytrade developer portal](https://developer.tastytrade.com). Execution is
+**DRY-RUN by default** (`WINTHORPE_LIVE=0`) — orders are logged, never sent. Live
+trading requires real credentials **and** `WINTHORPE_LIVE=1` in `.env`.
+
+### Run the desk (an MCP server)
+
+WinthorpeBot is an [MCP](https://modelcontextprotocol.io) server: it holds the
+deterministic core, the persistent live stream, and the risk floor; an MCP client
+(Claude Code, a custom agent, …) supplies the reasoning.
+
+```bash
+.venv/bin/python -m winthorpe.mcp.server                      # stdio (local MCP client)
+WINTHORPE_MCP_HTTP=1 .venv/bin/python -m winthorpe.mcp.server # http on :8190
+```
+
+To drive it from **Claude Code** (stdio), add it to your MCP servers (e.g. `~/.claude.json`):
+
+```json
+{
+  "mcpServers": {
+    "winthorpe-desk": {
+      "type": "stdio",
+      "command": "/absolute/path/to/WinthorpeBot/.venv/bin/python",
+      "args": ["-m", "winthorpe.mcp.server"]
+    }
+  }
+}
+```
+
+Then read structure (`get_volume_profile`, `get_gex`, `get_structural_levels`,
+`get_bars`), deliberate and arm (`propose_plan` → `validate_plan` →
+`sign_and_arm_plan`), watch (`get_status`, `get_position_state`), and exit
+(`flatten_position` for a graceful close, `engage_kill_switch` for emergencies).
+After a code change, restart the server — in Claude Code: `/mcp` → reconnect.
+
+### Tests
+
+```bash
+.venv/bin/python -m pytest -q          # full suite
+```
 
 ## Scope (v1)
 
@@ -57,7 +121,7 @@ execute it without flinching and refuse to let you blow up.
 
 ## Status
 
-All four planes built, standalone, 42 tests green. Execution defaults to **DRY-RUN**
+All four planes built, standalone, 110 tests green. Execution defaults to **DRY-RUN**
 (`WINTHORPE_LIVE=0`); the live lock stays off until the management loop has been
 watched fire on paper for a session.
 
@@ -70,9 +134,11 @@ watched fire on paper for a session.
 ### Harness (MCP)
 
 Single process in `.venv` (has tastytrade + fastmcp). Any MCP harness — Claude Code,
-OpenClaw, a custom agent — drives the desk through 8 tools (reads: `get_gex`,
-`get_status`, `get_session_risk`, `get_market_state`, `get_position_state`; reason:
-`propose_plan`; act: `sign_and_arm_plan`, `engage_kill_switch`). The harness supplies
+OpenClaw, a custom agent — drives the desk through 16 tools (reads: `get_gex`,
+`get_status`, `get_session_risk`, `get_market_state`, `get_position_state`,
+`get_structural_levels`, `get_volume_profile`, `get_bars`, `get_option_quote`,
+`get_journal`; reason: `propose_plan`, `validate_plan`; act: `sign_and_arm_plan`,
+`flatten_position`, `reset_kill_switch`, `engage_kill_switch`). The harness supplies
 the LLM; this process holds the deterministic core + the persistent stream + the risk
 floor. No `winthorpe/` module imports an LLM SDK — fully model-agnostic.
 
