@@ -84,11 +84,3 @@ WINTHORPE_MCP_HTTP=1 .venv/bin/python -m winthorpe.mcp.server # http :8190
 Agent role is position-state-dependent by construction: while a plan runs there is no
 "adjust live trade" tool (read telemetry + kill only); between plans the agent proposes
 and arms, but signing always passes validation + the risk gate it can't bypass.
-
-### Known follow-ups before live
-- A trading-hours shadow (DRY-RUN) session before the live lock comes off.
-- ES is not streamed (REST-fallback only); add a `/ES` front-month subscription if a
-  plan ever needs to trigger on ES.
-
-Done: live fill-price resolution (`wait_for_fill`), and `SessionRisk` + open-position
-persistence with broker-truth reconciliation on restart.
