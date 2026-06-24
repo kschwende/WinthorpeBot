@@ -25,7 +25,6 @@ an **execution-and-risk-discipline harness, not a signal service or black box** 
 secret alpha hidden inside. The edge is *your* read of the market; the bot's only job is to
 execute it without flinching and refuse to let you blow up.
 
-*Access is private and by invitation — reach out if you'd like to be added to the repo.*
 
 ## Scope (v1)
 
