@@ -162,3 +162,54 @@ def test_expected_levels_attaches_gamma_turn_when_curve_present():
     assert out["cap"]["trigger"] == 7388            # confluence near-edge unchanged
     assert "gamma_turn" in out["cap"]               # gamma layer attached
     assert out["cap"]["gamma_turn"] < 7400
+
+
+# --- structural stop: size sl_pct to survive a push to the wall --------------
+
+def test_structural_sl_pct_widens_for_leading_edge_entry():
+    from winthorpe.levels.expected_cap import structural_sl_pct
+    # Entry 7388, wall 7400 (12 pts), ATM put delta 0.5 @ $20:
+    # loss to the wall ~30%, +20% buffer -> ~-36% (NOT -25%, which the push trips).
+    s = structural_sl_pct(near_edge=7388, far_edge=7400,
+                          option_delta=-0.5, option_premium=20.0)
+    assert s["adverse_pts"] == 12.0
+    assert s["est_loss_pct_at_wall"] == 0.3
+    assert s["sl_pct"] == -0.36
+    assert s["sl_pct"] < -0.25          # wider than the old blanket stop
+
+
+def test_structural_sl_pct_lone_wall_uses_tight_default():
+    from winthorpe.levels.expected_cap import structural_sl_pct
+    # near == far (entry AT the wall, no zone): no adverse room -> clamp to -0.20.
+    s = structural_sl_pct(near_edge=7400, far_edge=7400,
+                          option_delta=-0.5, option_premium=20.0)
+    assert s["sl_pct"] == -0.20
+    assert s["clamped"] is True
+
+
+def test_structural_sl_pct_clamps_wide():
+    from winthorpe.levels.expected_cap import structural_sl_pct
+    # Huge adverse room would imply a >50% stop -> clamp to the -0.50 floor.
+    s = structural_sl_pct(near_edge=7350, far_edge=7400,
+                          option_delta=-0.5, option_premium=20.0)
+    assert s["sl_pct"] == -0.50
+    assert s["clamped"] is True
+
+
+def test_expected_levels_attaches_suggested_sl_pct():
+    curve = [
+        {"strike": 7388, "put_delta": -0.5, "put_price": 20.0,
+         "call_gex": 3e6, "put_gex": -1e6},
+        {"strike": 7400, "put_delta": -0.4, "put_price": 14.0,
+         "call_gex": 8e6, "put_gex": 0},
+    ]
+    out = expected_levels(
+        spot=7376.0,
+        gex={"call_wall": {"strike": 7400}, "put_wall": {"strike": 7350},
+             "levels": curve},
+        structural={"onh": 7388, "weekly_vwap": 7395, "pdh": 7419},
+        now_et=datetime(2026, 6, 26, 10, 30, tzinfo=ET),
+    )
+    sl = out["cap"]["suggested_sl_pct"]
+    assert sl["sl_pct"] == -0.36          # entry 7388 -> wall 7400, ~36%
+    assert sl["est_strike"] == 7388

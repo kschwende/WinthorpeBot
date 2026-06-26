@@ -229,6 +229,46 @@ def gamma_support_floor(spot: float, levels: list[dict],
     return round(sum(l["strike"] * abs(l["put_gex"]) for l in zone) / w, 2)
 
 
+def structural_sl_pct(
+    *,
+    near_edge: float,
+    far_edge: float,
+    option_delta: float,
+    option_premium: float,
+    buffer: float = 0.20,
+    band: tuple[float, float] = (-0.50, -0.20),
+) -> Optional[dict]:
+    """Derive a premium stop wide enough to SURVIVE a normal push from the fade
+    entry (``near_edge``) to the wall (``far_edge``), so the in-zone push doesn't
+    stop a good fade out before the structural invalidation (acceptance past the
+    wall) can fire.
+
+    A leading-edge entry sits BELOW the wall, so a normal rally through the
+    cluster moves against the put by ``|far_edge - near_edge|`` points. The
+    first-order premium hit is ``|delta| * adverse_pts / premium`` (using entry
+    delta overstates it slightly since the put goes OTM into the wall — a
+    conservative, intentionally-not-too-tight estimate). Widen by ``buffer`` and
+    clamp to ``band`` (default: never tighter than -20%, never wider than -50%).
+
+    The premium stop is the BACKSTOP; the real kill stays the plan's invalidation
+    (accept above the wall / 60s). Returns {sl_pct, adverse_pts,
+    est_loss_pct_at_wall, clamped}, or None if premium is non-positive.
+    """
+    if option_premium <= 0:
+        return None
+    adverse_pts = abs(far_edge - near_edge)
+    loss_at_wall = abs(option_delta) * adverse_pts / option_premium
+    raw = -loss_at_wall * (1.0 + buffer)
+    lo, hi = band                      # e.g. (-0.50, -0.20)
+    sl = max(lo, min(hi, raw))
+    return {
+        "sl_pct": round(sl, 3),
+        "adverse_pts": round(adverse_pts, 2),
+        "est_loss_pct_at_wall": round(loss_at_wall, 3),
+        "clamped": round(sl, 3) != round(raw, 3),
+    }
+
+
 def expected_levels(
     *,
     spot: float,
@@ -294,10 +334,24 @@ def expected_levels(
     # confluence turn. Bounded by the wall so it stays in the approach zone.
     curve = gex.get("levels") if gex else None
     if curve:
+        strikes = [l for l in curve if l.get("strike") is not None]
         if cap_dict:
             gt = gamma_resistance_cap(spot, curve, upper=cw)
             if gt is not None:
                 cap_dict["gamma_turn"] = gt
+            # Structural stop for a PUT fade entered at the cap's near edge:
+            # size sl_pct to survive a push to the wall, using the near-ATM put.
+            atm = min(strikes, key=lambda l: abs(l["strike"] - cap_dict["trigger"]),
+                      default=None)
+            if atm and (atm.get("put_price") or 0) > 0:
+                ssl = structural_sl_pct(
+                    near_edge=cap_dict["trigger"],
+                    far_edge=cap_dict["invalidation_beyond"],
+                    option_delta=atm.get("put_delta") or 0.5,
+                    option_premium=atm["put_price"])
+                if ssl:
+                    ssl["est_strike"] = atm["strike"]
+                    cap_dict["suggested_sl_pct"] = ssl
         if floor_dict:
             gf = gamma_support_floor(spot, curve, lower=pw)
             if gf is not None:
