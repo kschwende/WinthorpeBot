@@ -100,6 +100,42 @@ def get_structural_levels() -> dict:
     return fetch_structural_levels().to_dict()
 
 
+@mcp.tool
+async def get_expected_levels(product: str = "SPX") -> dict:
+    """Pre-compute WHERE a rally caps / a selloff floors, from GEX walls +
+    structural + volume-profile confluence — so a fade trigger goes at the cap's
+    LEADING EDGE (a few pts below the call wall, where price actually turns), not
+    parked at the wall where it never fills. Returns {spot, cap, floor,
+    charm_window, note}; cap.trigger is the suggested fade-entry level,
+    cap.expected_turn where it likely stalls, cap.invalidation_beyond the kill
+    line. Conviction is higher inside a charm window. See
+    winthorpe/levels/expected_cap.py."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from winthorpe.levels.expected_cap import expected_levels
+
+    gex = await compute_gex(product=product)
+    if gex.get("error"):
+        return {"error": gex["error"]}
+    structural = None
+    try:
+        from winthorpe.levels.structural import fetch_structural_levels
+        structural = fetch_structural_levels().to_dict()
+    except Exception:
+        logger.warning("structural unavailable for expected_levels", exc_info=True)
+    vp_spx = None
+    try:
+        from winthorpe.levels.volume_profile import fetch_volume_profile
+        vp_spx = (fetch_volume_profile("today") or {}).get("spx")
+    except Exception:
+        logger.warning("volume profile unavailable for expected_levels", exc_info=True)
+    return expected_levels(
+        spot=gex["spot"], gex=gex, structural=structural, vp_spx=vp_spx,
+        now_et=datetime.now(ZoneInfo("America/New_York")),
+    )
+
+
 # --- read / inspect kit (raw data for bespoke agent reasoning) --------------
 @mcp.tool
 def get_journal(session_date: str = "") -> list[dict]:
