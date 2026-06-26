@@ -17,6 +17,7 @@ Run (single process, .venv has tastytrade + fastmcp):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -100,6 +101,49 @@ def get_structural_levels() -> dict:
     return fetch_structural_levels().to_dict()
 
 
+async def _structural_to_dict() -> dict | None:
+    """Fetch structural levels OFF the event loop. fetch_structural_levels uses
+    asyncio.run internally, which raises inside a running loop — so an async tool
+    that calls it directly silently loses all structural levels (the cap then
+    collapses to the lone wall). asyncio.to_thread runs it in a worker thread
+    where asyncio.run is legal. Best-effort: None on failure."""
+    try:
+        from winthorpe.levels.structural import fetch_structural_levels
+        lv = await asyncio.to_thread(fetch_structural_levels)
+        return lv.to_dict()
+    except Exception:
+        logger.warning("structural unavailable (async fetch)", exc_info=True)
+        return None
+
+
+async def _vp_spx(session: str = "today") -> dict | None:
+    """Today's SPX volume-profile sub-dict, fetched off the event loop (same
+    asyncio.run-in-loop reason as _structural_to_dict). None on failure."""
+    try:
+        from winthorpe.levels.volume_profile import fetch_volume_profile
+        vp = await asyncio.to_thread(fetch_volume_profile, session)
+        return (vp or {}).get("spx")
+    except Exception:
+        logger.warning("volume profile unavailable (async fetch)", exc_info=True)
+        return None
+
+
+async def _expected_levels(gex: dict) -> dict | None:
+    """Compute the cap/floor zone from a GEX result + structural + volume profile.
+    Shared by get_expected_levels and propose_plan. None if no spot."""
+    if not gex or not gex.get("spot"):
+        return None
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from winthorpe.levels.expected_cap import expected_levels
+    return expected_levels(
+        spot=gex["spot"], gex=gex,
+        structural=await _structural_to_dict(), vp_spx=await _vp_spx("today"),
+        now_et=datetime.now(ZoneInfo("America/New_York")),
+    )
+
+
 @mcp.tool
 async def get_expected_levels(product: str = "SPX") -> dict:
     """Pre-compute WHERE a rally caps / a selloff floors, from GEX walls +
@@ -108,32 +152,12 @@ async def get_expected_levels(product: str = "SPX") -> dict:
     parked at the wall where it never fills. Returns {spot, cap, floor,
     charm_window, note}; cap.trigger is the suggested fade-entry level,
     cap.expected_turn where it likely stalls, cap.invalidation_beyond the kill
-    line. Conviction is higher inside a charm window. See
-    winthorpe/levels/expected_cap.py."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
-    from winthorpe.levels.expected_cap import expected_levels
-
+    line, cap.suggested_sl_pct the structural stop. Conviction is higher inside a
+    charm window. See winthorpe/levels/expected_cap.py."""
     gex = await compute_gex(product=product)
     if gex.get("error"):
         return {"error": gex["error"]}
-    structural = None
-    try:
-        from winthorpe.levels.structural import fetch_structural_levels
-        structural = fetch_structural_levels().to_dict()
-    except Exception:
-        logger.warning("structural unavailable for expected_levels", exc_info=True)
-    vp_spx = None
-    try:
-        from winthorpe.levels.volume_profile import fetch_volume_profile
-        vp_spx = (fetch_volume_profile("today") or {}).get("spx")
-    except Exception:
-        logger.warning("volume profile unavailable for expected_levels", exc_info=True)
-    return expected_levels(
-        spot=gex["spot"], gex=gex, structural=structural, vp_spx=vp_spx,
-        now_et=datetime.now(ZoneInfo("America/New_York")),
-    )
+    return await _expected_levels(gex)
 
 
 # --- read / inspect kit (raw data for bespoke agent reasoning) --------------
@@ -232,10 +256,12 @@ async def propose_plan(thesis: str, side: str, proposed_level: float,
     high). tp_pct then acts as a hard ceiling above the trail."""
     gex = await compute_gex(product=product)
     # Structural levels for confluence (best-effort — never block the proposal).
+    # to_thread: fetch_structural_levels uses asyncio.run internally, illegal in
+    # this running loop — without the thread hop it silently yields no levels.
     levels = None
     try:
         from winthorpe.levels.structural import fetch_structural_levels
-        levels = fetch_structural_levels()
+        levels = await asyncio.to_thread(fetch_structural_levels)
     except Exception:
         logger.warning("structural levels unavailable for confluence", exc_info=True)
     proposal = _propose(
@@ -244,10 +270,28 @@ async def propose_plan(thesis: str, side: str, proposed_level: float,
         trail_activate_pct=trail_activate_pct, trail_pct=trail_pct,
         time_stop_et=time_stop_et,
     )
+    # Expected cap/floor zone — surfaced inline so the trigger decision is made
+    # against the geometry (where the edge starts, what the wall is) right here in
+    # the plan discussion. Reuses the already-fetched levels. Best-effort.
+    expected = None
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from winthorpe.levels.expected_cap import expected_levels
+        if gex.get("spot"):
+            expected = expected_levels(
+                spot=gex["spot"], gex=gex,
+                structural=levels.to_dict() if levels else None,
+                vp_spx=await _vp_spx("today"),
+                now_et=datetime.now(ZoneInfo("America/New_York")))
+    except Exception:
+        logger.warning("expected cap unavailable for proposal", exc_info=True)
     return {"draft_plan": proposal.plan.to_dict(), "corrections": proposal.corrections,
             "confluence": proposal.confluence,
             "gex": {k: gex[k] for k in ("spot", "call_wall", "put_wall") if k in gex},
-            "structural_levels": levels.as_named() if levels else {}}
+            "structural_levels": levels.as_named() if levels else {},
+            "expected_levels": expected}
 
 
 # --- actions: arm / kill ----------------------------------------------------
