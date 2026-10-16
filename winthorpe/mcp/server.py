@@ -287,6 +287,12 @@ async def propose_plan(thesis: str, side: str, proposed_level: float,
                 now_et=datetime.now(ZoneInfo("America/New_York")))
     except Exception:
         logger.warning("expected cap unavailable for proposal", exc_info=True)
+    # Journal the draft so declined proposals are scoreable later (selectivity test).
+    try:
+        from winthorpe.journal.journal import Journal
+        Journal().plan_proposed(proposal.plan.to_dict(), proposal.corrections)
+    except Exception:
+        logger.warning("could not journal the proposal", exc_info=True)
     return {"draft_plan": proposal.plan.to_dict(), "corrections": proposal.corrections,
             "confluence": proposal.confluence,
             "gex": {k: gex[k] for k in ("spot", "call_wall", "put_wall") if k in gex},

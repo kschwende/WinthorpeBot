@@ -55,6 +55,13 @@ class Journal:
             f.write(json.dumps(row, default=str) + "\n")
         logger.debug("journal %s: %s", kind, payload.get("plan_id", ""))
 
+    def plan_proposed(self, plan_dict: dict, corrections: Any = None) -> None:
+        """A draft the human saw. Declined drafts are half of the selectivity test
+        (research/DISCRETIONARY_TEST_PROTOCOL.md in VPEBot): without them you cannot
+        ask whether the signed subset beat the rest."""
+        self._write("plan_proposed", {"plan_id": plan_dict.get("plan_id"), "plan": plan_dict,
+                                      "corrections": corrections})
+
     def plan_signed(self, plan_dict: dict) -> None:
         self._write("plan_signed", {"plan_id": plan_dict.get("plan_id"), "plan": plan_dict})
 
